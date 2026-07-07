@@ -1,0 +1,13 @@
+<svg width="36" height="36" viewBox="0 0 36 36" xmlns="http://www.w3.org/2000/svg">
+  <!-- 兜帽外轮廓 -->
+  <path d="M 4 34 C 0 18 6 6 10 4 C 13 2.5 16 7 18 8 C 20 7 23 2.5 26 4 C 30 6 36 18 32 34 Z" 
+        stroke="#FFFFFF" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="none" />
+  
+  <!-- 脸庞与动漫刘海轮廓 -->
+  <path d="M 10 34 L 10 22 C 10 15 14 15 18 18 C 22 15 26 15 26 22 L 26 34" 
+        stroke="#FFFFFF" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="none" />
+  
+  <!-- 闭合的眼睛 (待机/睡眠) -->
+  <path d="M 12 24 Q 14 26 15.5 24 M 20.5 24 Q 22 26 24 24" 
+        stroke="#FFFFFF" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="none" />
+</svg>
