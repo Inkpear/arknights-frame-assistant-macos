@@ -83,3 +83,70 @@ impl WindowListener for ArkWindowListener {
         self.app_state.emit_status();
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn matches_arknights_by_name() {
+        assert!(matches_rules(&Some("Arknights".into()), &None));
+        assert!(matches_rules(&Some("arknights".into()), &None));
+        assert!(matches_rules(&None, &Some("明日方舟".into())));
+    }
+
+    #[test]
+    fn matches_arknights_by_title() {
+        assert!(matches_rules(
+            &Some("Terminal".into()),
+            &Some("Arknights - Stage".into())
+        ));
+        assert!(matches_rules(&None, &Some("明日方舟 - 作战".into())));
+    }
+
+    #[test]
+    fn matches_no_match() {
+        assert!(!matches_rules(
+            &Some("Safari".into()),
+            &Some("Google".into())
+        ));
+        assert!(!matches_rules(&None, &None));
+    }
+
+    #[test]
+    fn window_context_default_unavailable() {
+        let ctx = WindowContext::default();
+        assert!(!ctx.is_available());
+        assert!(ctx.bounds().is_none());
+    }
+
+    #[test]
+    fn window_context_available_when_matching_with_bounds() {
+        let mut ctx = WindowContext::default();
+        ctx.is_arknights = true;
+        ctx.window_bounds = Some(WindowBounds {
+            x: 0.0,
+            y: 0.0,
+            width: 800.0,
+            height: 600.0,
+        });
+        assert!(ctx.is_available());
+        assert!(ctx.bounds().is_some());
+    }
+
+    #[test]
+    fn mark_unavailable_clears_state() {
+        let mut ctx = WindowContext::default();
+        ctx.is_arknights = true;
+        ctx.window_bounds = Some(WindowBounds {
+            x: 0.0,
+            y: 0.0,
+            width: 800.0,
+            height: 600.0,
+        });
+        ctx.mark_unavailable();
+        assert!(!ctx.is_available());
+        assert!(ctx.window_bounds.is_none());
+        assert!(!ctx.is_arknights);
+    }
+}

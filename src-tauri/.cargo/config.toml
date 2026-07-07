@@ -1,0 +1,2 @@
+[env]
+DYLD_FALLBACK_LIBRARY_PATH = { value = "/usr/lib/swift", relative = false }

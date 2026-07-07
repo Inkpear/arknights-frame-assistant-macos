@@ -97,10 +97,7 @@ fn handle_event(app_state: Arc<AppState>, event: CGEventItem) -> anyhow::Result<
         let window_ctx_guard = app_state.window_ctx.read().unwrap();
         action_ctx = ActionContext::new(
             window_ctx_guard.bounds().unwrap(),
-            config_guard
-                .ui_ratio
-                .as_ref()
-                .unwrap_or(&Default::default()),
+            &config_guard.effective_ui_ratio(),
             (event.location.x, event.location.y),
         )?;
     }

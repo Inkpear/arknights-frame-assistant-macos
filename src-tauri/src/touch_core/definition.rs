@@ -72,7 +72,16 @@ pub fn build_keycode_map(
             .and_then(|c| c.get(*action_id))
             .copied()
             .unwrap_or_else(|| action.get_default_keycode());
-        map.insert(keycode, *action);
+        if let Some(prev) = map.insert(keycode, *action)
+            && prev.get_action_id() != *action_id
+        {
+            log::warn!(
+                "Keycode {} shadowed: {} overwritten by {}",
+                keycode,
+                prev.get_action_id(),
+                action_id
+            );
+        }
     }
     map
 }

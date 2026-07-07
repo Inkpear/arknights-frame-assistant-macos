@@ -76,3 +76,46 @@ pub fn compute_position(ratio_x: f64, ratio_y: f64, window: &WindowBounds) -> (f
 pub fn check_in_window(x: f64, y: f64, window: &WindowBounds) -> bool {
     x >= window.x && x <= window.x + window.width && y >= window.y && y <= window.y + window.height
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_window() -> WindowBounds {
+        WindowBounds {
+            x: 100.0,
+            y: 200.0,
+            width: 800.0,
+            height: 600.0,
+        }
+    }
+
+    #[test]
+    fn compute_position_corner() {
+        let w = test_window();
+        assert_eq!(compute_position(0.0, 0.0, &w), (100.0, 200.0));
+        assert_eq!(compute_position(1.0, 1.0, &w), (900.0, 800.0));
+    }
+
+    #[test]
+    fn compute_position_center() {
+        let w = test_window();
+        assert_eq!(compute_position(0.5, 0.5, &w), (500.0, 500.0));
+    }
+
+    #[test]
+    fn check_in_window_inside() {
+        let w = test_window();
+        assert!(check_in_window(100.0, 200.0, &w));
+        assert!(check_in_window(900.0, 800.0, &w));
+        assert!(check_in_window(500.0, 500.0, &w));
+    }
+
+    #[test]
+    fn check_in_window_outside() {
+        let w = test_window();
+        assert!(!check_in_window(99.0, 200.0, &w));
+        assert!(!check_in_window(100.0, 199.0, &w));
+        assert!(!check_in_window(901.0, 800.0, &w));
+    }
+}

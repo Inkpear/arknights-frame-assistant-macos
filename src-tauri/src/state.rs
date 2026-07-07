@@ -165,8 +165,8 @@ impl AppState {
 
     /// Emit a status-changed event to the frontend.
     pub fn emit_status(&self) {
-        let window_ctx = self.window_ctx.read().unwrap();
         let config = self.config.read().unwrap();
+        let window_ctx = self.window_ctx.read().unwrap();
         let window_available = window_ctx.is_available();
         let hotkey_enabled = self.is_hotkey_enabled();
         let _ = self.app_handle.emit(
