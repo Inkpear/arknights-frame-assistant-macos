@@ -184,7 +184,10 @@ async fn handle_event_with_calibrating_mode(
     let window_bounds: WindowBounds;
     {
         let window_ctx = app_state.window_ctx.read().await;
-
+        if !window_ctx.is_available() {
+            log::debug!("Window is not available, ignoring event");
+            return Ok(());
+        }
         window_bounds = window_ctx.bounds().unwrap().clone();
     }
     if event.keycode != Keycode::SPACE {
