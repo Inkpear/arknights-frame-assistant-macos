@@ -1,6 +1,5 @@
-use std::sync::Arc;
-
 use mado::{WindowBounds, WindowEvent, WindowInfo, WindowListener};
+use tauri::{AppHandle, Manager};
 
 use crate::state::AppState;
 
@@ -19,12 +18,17 @@ pub struct WindowContext {
 
 /// Filter rules: app_name or window_title (lowercased) containing any of these → match.
 const WINDOW_FILTER_RULES: [&str; 2] = ["arknights", "明日方舟"];
+const WINDOW_FILTER_BLACKLIST: [&str; 3] = [
+    "明日方舟帧操",
+    "arknights-frame-assistant",
+    "Arknights Frame Assistant",
+];
 
 /// Check if app_name or window_title matches any filter rule.
-pub fn matches_rules(name: &Option<String>, title: &Option<String>) -> bool {
+pub fn matches_rules(name: &Option<String>, title: &Option<String>, filters: &[&str]) -> bool {
     let name_lower = name.as_ref().map(|s| s.to_lowercase());
     let title_lower = title.as_ref().map(|s| s.to_lowercase());
-    WINDOW_FILTER_RULES.iter().any(|rule| {
+    filters.iter().any(|rule| {
         let rule = rule.to_lowercase();
         name_lower.as_ref().is_some_and(|n| n.contains(&rule))
             || title_lower.as_ref().is_some_and(|t| t.contains(&rule))
@@ -47,7 +51,8 @@ impl WindowContext {
         self.app_name = info.app.name.clone();
         self.window_title = info.title.clone();
         self.window_bounds = info.bounds.clone();
-        self.is_arknights = matches_rules(&self.app_name, &self.window_title);
+        self.is_arknights = matches_rules(&self.app_name, &self.window_title, &WINDOW_FILTER_RULES)
+            && !matches_rules(&self.app_name, &self.window_title, &WINDOW_FILTER_BLACKLIST);
     }
 
     /// Mark as unavailable when window is destroyed or minimized.
@@ -59,28 +64,30 @@ impl WindowContext {
 
 /// Bridges mado WindowEvents to AppState for status push.
 pub struct ArkWindowListener {
-    pub app_state: Arc<AppState>,
+    pub app_handle: AppHandle,
 }
 
 impl WindowListener for ArkWindowListener {
     fn on_focus_change(&self, event: WindowEvent) {
-        let mut ctx = self.app_state.window_ctx.write().unwrap();
-        match event {
-            WindowEvent::WindowChanged { window } => {
-                ctx.update_from_window_info(&window);
-            }
-            WindowEvent::WindowBoundsChanged { window } => {
-                if let Some(bounds) = window.bounds {
-                    ctx.window_bounds = Some(bounds);
+        let app_state = self.app_handle.state::<AppState>();
+        {
+            let mut ctx = app_state.window_ctx.blocking_write();
+            match event {
+                WindowEvent::WindowChanged { window } => {
+                    ctx.update_from_window_info(&window);
                 }
+                WindowEvent::WindowBoundsChanged { window } => {
+                    if let Some(bounds) = window.bounds {
+                        ctx.window_bounds = Some(bounds);
+                    }
+                }
+                WindowEvent::WindowMinimized { .. } | WindowEvent::WindowDestroyed { .. } => {
+                    ctx.mark_unavailable();
+                }
+                _ => {}
             }
-            WindowEvent::WindowMinimized { .. } | WindowEvent::WindowDestroyed { .. } => {
-                ctx.mark_unavailable();
-            }
-            _ => {}
         }
-        drop(ctx);
-        self.app_state.emit_status();
+        app_state.emit_status();
     }
 }
 
@@ -90,27 +97,45 @@ mod tests {
 
     #[test]
     fn matches_arknights_by_name() {
-        assert!(matches_rules(&Some("Arknights".into()), &None));
-        assert!(matches_rules(&Some("arknights".into()), &None));
-        assert!(matches_rules(&None, &Some("明日方舟".into())));
+        assert!(matches_rules(
+            &Some("Arknights".into()),
+            &None,
+            &WINDOW_FILTER_RULES
+        ));
+        assert!(matches_rules(
+            &Some("arknights".into()),
+            &None,
+            &WINDOW_FILTER_RULES
+        ));
+        assert!(matches_rules(
+            &None,
+            &Some("明日方舟".into()),
+            &WINDOW_FILTER_RULES
+        ));
     }
 
     #[test]
     fn matches_arknights_by_title() {
         assert!(matches_rules(
             &Some("Terminal".into()),
-            &Some("Arknights - Stage".into())
+            &Some("Arknights - Stage".into()),
+            &WINDOW_FILTER_RULES
         ));
-        assert!(matches_rules(&None, &Some("明日方舟 - 作战".into())));
+        assert!(matches_rules(
+            &None,
+            &Some("明日方舟 - 作战".into()),
+            &WINDOW_FILTER_RULES
+        ));
     }
 
     #[test]
     fn matches_no_match() {
         assert!(!matches_rules(
             &Some("Safari".into()),
-            &Some("Google".into())
+            &Some("Google".into()),
+            &WINDOW_FILTER_RULES
         ));
-        assert!(!matches_rules(&None, &None));
+        assert!(!matches_rules(&None, &None, &WINDOW_FILTER_RULES));
     }
 
     #[test]

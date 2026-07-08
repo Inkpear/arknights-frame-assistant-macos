@@ -1,28 +1,79 @@
-use std::sync::Arc;
+use mado::{MonitorConfig, WindowBounds, WindowMonitor};
+use tauri::{Manager, State};
 
-use mado::{MonitorConfig, WindowMonitor};
-
+use crate::config::AppConfig;
+use crate::desktop::tray::TrayMenuItemHandles;
+use crate::ipc;
+use crate::ipc::protocol::UIRatioPayload;
 use crate::touch_core::action::ActionContext;
+use crate::touch_core::position;
 use crate::{state::AppState, touch_core::window::ArkWindowListener};
 
 use cgevents::async_api::{CGEventItem, CGEventTapStream};
-use cgevents::{CG_EVENT_MASK_FOR_ALL_EVENTS, Keycode, TapLocation};
+use cgevents::cg_event_type::CGEventType;
+use cgevents::{Keycode, TapLocation};
 
-/// Start all services.
-pub async fn run(app_state: Arc<AppState>) -> anyhow::Result<()> {
-    tokio::try_join!(
-        start_event_listener(app_state.clone()),
-        start_monitor(app_state.clone()),
-    )?;
-    log::info!("All services have been shut down. Exiting.");
-    Ok(())
+/// Start application
+pub fn run() {
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+
+    tauri::Builder::default()
+        .invoke_handler(tauri::generate_handler![
+            ipc::commands::get_status,
+            ipc::commands::set_hotkey_enabled,
+            ipc::commands::set_calibrating_mode_enabled,
+            ipc::commands::set_calibrating_target,
+            ipc::commands::switch_profile,
+            ipc::commands::update_custom_keycode,
+            ipc::commands::reset_ui_ratio,
+            ipc::commands::reset_config,
+            ipc::commands::shutdown,
+        ])
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                api.prevent_close();
+                window.hide().ok();
+            }
+        })
+        .setup(move |app| {
+            let handle = app.handle().clone();
+
+            let config = AppConfig::load().unwrap_or_default();
+            let app_state = AppState::new(config, handle.clone());
+            let tray_menu_handles =
+                TrayMenuItemHandles::new(app).expect("Failed to build tray menu");
+
+            app.manage(app_state);
+            app.manage(tray_menu_handles);
+
+            tauri::async_runtime::block_on(async {
+                app.handle().state::<AppState>().emit_status_async().await;
+            });
+
+            let listener_handle = handle.clone();
+            tauri::async_runtime::spawn(async move {
+                if let Err(e) = start_event_listener(listener_handle).await {
+                    log::error!("Event listener failed: {e}");
+                }
+            });
+
+            let window_monitor_handle = handle.clone();
+            tauri::async_runtime::spawn(async move {
+                start_window_monitor(window_monitor_handle).await;
+            });
+
+            Ok(())
+        })
+        .run(tauri::generate_context!())
+        .expect("Failed to start application");
 }
 
 /// Start event listener
-async fn start_event_listener(app_state: Arc<AppState>) -> anyhow::Result<()> {
+async fn start_event_listener(app_handle: tauri::AppHandle) -> anyhow::Result<()> {
+    let app_state = app_handle.state::<AppState>();
     let mut shutdown_signal = app_state.shutdown_channel.1.resubscribe();
-    let stream =
-        CGEventTapStream::subscribe(TapLocation::Session, CG_EVENT_MASK_FOR_ALL_EVENTS, 64)?;
+    let mask = 1u64 << CGEventType::KeyUp.raw();
+    let stream = CGEventTapStream::subscribe(TapLocation::Session, mask, 64)?;
     loop {
         tokio::select! {
             _ = shutdown_signal.recv() => {
@@ -37,11 +88,11 @@ async fn start_event_listener(app_state: Arc<AppState>) -> anyhow::Result<()> {
                 let event = event.unwrap();
                 log::debug!("Received event: {:?}", event);
                 if app_state.is_calibrating_mode_enabled() {
-                    if let Err(e) = handle_event_with_calibrating_mode(Arc::clone(&app_state), event) {
+                    if let Err(e) = handle_event_with_calibrating_mode(app_state.clone(), event).await {
                         log::error!("Error handling event in calibrating mode: {e}");
                     }
                 } else {
-                    if let Err(e) = handle_event(Arc::clone(&app_state), event) {
+                    if let Err(e) = handle_event(app_state.clone(), event).await {
                         log::error!("Error handling event: {e}");
                     }
                 }
@@ -52,40 +103,55 @@ async fn start_event_listener(app_state: Arc<AppState>) -> anyhow::Result<()> {
 }
 
 /// Start window monitor
-async fn start_monitor(app_state: Arc<AppState>) -> anyhow::Result<()> {
-    let mut shutdown_signal = app_state.shutdown_channel.1.resubscribe();
-    let config = MonitorConfig {
-        track_window_bounds_changes: true,
-        ..Default::default()
-    };
-    let monitor = WindowMonitor::with_config(ArkWindowListener { app_state }, config);
-    tokio::select! {
-        _ = shutdown_signal.recv() => {
-            log::info!("Received shutdown signal, shutting down process monitor...");
-            WindowMonitor::stop()?;
+async fn start_window_monitor(app_handle: tauri::AppHandle) {
+    let mut shutdown_rx = app_handle
+        .state::<AppState>()
+        .shutdown_channel
+        .1
+        .resubscribe();
+    let monitor_handle = app_handle.clone();
+    std::thread::spawn(move || {
+        let config = MonitorConfig {
+            track_window_bounds_changes: true,
+            ..Default::default()
+        };
+        let monitor = WindowMonitor::with_config(
+            ArkWindowListener {
+                app_handle: monitor_handle,
+            },
+            config,
+        );
+        if let Err(e) = monitor.run() {
+            log::error!("Window monitor failed: {e}");
         }
-        res = tokio::task::spawn_blocking(move || monitor.run()) => {
-            if let Err(e) = res {
-                log::error!("Window monitor failed: {e}");
-            }
-        }
-    }
-    Ok(())
+    });
+    let _ = shutdown_rx.recv().await;
+    log::info!("Received shutdown signal, shutting down window monitor...");
+    WindowMonitor::stop().ok();
 }
 
 /// Handle a single CGEventItem, executing the corresponding action if applicable.
-fn handle_event(app_state: Arc<AppState>, event: CGEventItem) -> anyhow::Result<()> {
+async fn handle_event(app_state: State<'_, AppState>, event: CGEventItem) -> anyhow::Result<()> {
     log::debug!("Received event: {:?}", event);
     if !app_state.is_hotkey_enabled() {
         log::debug!("Hotkey is disabled, ignoring event");
         return Ok(());
     }
-    if !app_state.is_window_available() {
-        log::debug!("Window is not available, ignoring event");
+    let window_bounds: WindowBounds;
+    {
+        let window_ctx = app_state.window_ctx.read().await;
+        if !window_ctx.is_available() {
+            log::debug!("Window is not available, ignoring event");
+            return Ok(());
+        }
+        window_bounds = window_ctx.bounds().unwrap().clone();
+    }
+    if !position::check_in_window(event.location.x, event.location.y, &window_bounds) {
+        log::debug!("Event is outside the window bounds, ignoring");
         return Ok(());
     }
 
-    let action = app_state.get_action_for_keycode(event.keycode);
+    let action = app_state.get_action_for_keycode(event.keycode).await;
     if action.is_none() {
         log::debug!("No action mapped for keycode: {}", event.keycode);
         return Ok(());
@@ -93,13 +159,11 @@ fn handle_event(app_state: Arc<AppState>, event: CGEventItem) -> anyhow::Result<
     let action = action.unwrap();
     let action_ctx: ActionContext;
     {
-        let config_guard = app_state.config.read().unwrap();
-        let window_ctx_guard = app_state.window_ctx.read().unwrap();
         action_ctx = ActionContext::new(
-            window_ctx_guard.bounds().unwrap(),
-            &config_guard.effective_ui_ratio(),
+            &window_bounds,
+            &app_state.config.read().await.effective_ui_ratio(),
             (event.location.x, event.location.y),
-        )?;
+        );
     }
 
     log::info!("Executing action: {}", action.get_action_id());
@@ -113,13 +177,15 @@ fn handle_event(app_state: Arc<AppState>, event: CGEventItem) -> anyhow::Result<
 }
 
 /// Handle a single CGEventItem in calibrating mode.
-fn handle_event_with_calibrating_mode(
-    app_state: Arc<AppState>,
+async fn handle_event_with_calibrating_mode(
+    app_state: State<'_, AppState>,
     event: CGEventItem,
 ) -> anyhow::Result<()> {
-    if !app_state.is_window_available() {
-        log::debug!("Window is not available, ignoring event");
-        return Ok(());
+    let window_bounds: WindowBounds;
+    {
+        let window_ctx = app_state.window_ctx.read().await;
+
+        window_bounds = window_ctx.bounds().unwrap().clone();
     }
     if event.keycode != Keycode::SPACE {
         log::debug!("Calibrating mode: ignoring non-space key event");
@@ -127,11 +193,9 @@ fn handle_event_with_calibrating_mode(
     }
     let (cursor_x, cursor_y) = (event.location.x, event.location.y);
     let (ratio_x, ratio_y) = {
-        let window_ctx_guard = app_state.window_ctx.read().unwrap();
-        let bounds = window_ctx_guard.bounds().unwrap();
         (
-            (cursor_x - bounds.x) / bounds.width,
-            (cursor_y - bounds.y) / bounds.height,
+            (cursor_x - window_bounds.x) / window_bounds.width,
+            (cursor_y - window_bounds.y) / window_bounds.height,
         )
     };
     if !(0.0..=1.0).contains(&ratio_x) || !(0.0..=1.0).contains(&ratio_y) {
@@ -142,10 +206,18 @@ fn handle_event_with_calibrating_mode(
         );
         return Ok(());
     }
-
-    if let Some(target) = app_state.calibrating_target.read().unwrap().as_ref() {
-        app_state.emit_ratio_updated(target, (ratio_x, ratio_y));
+    let ratio_type = app_state.calibrating_target.read().await.clone();
+    if ratio_type.is_none() {
+        app_state.switch_calibrating_mode_enabled(false).await;
+        log::warn!("Calibrating mode: no target selected");
+        return Ok(());
     }
+    let ratio_payload = UIRatioPayload {
+        ratio_type: ratio_type.unwrap(),
+        ratio: (ratio_x, ratio_y),
+    };
+    app_state.update_ui_ratio(&ratio_payload).await?;
+    app_state.emit_ratio_updated(&ratio_payload);
 
     Ok(())
 }

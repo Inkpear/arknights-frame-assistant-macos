@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use crate::touch_core::{
     definition::ActionDefinition,
     mouse,
-    position::{self, UIPosition, UIRatio},
+    position::{UIPosition, UIRatio},
 };
 
 const ANIMATION_WAIT: f64 = 100.0; // Default wait time for animations in milliseconds
@@ -17,20 +17,12 @@ pub struct ActionContext {
 
 impl ActionContext {
     /// Create an ActionContext, validating the cursor is within the given window bounds.
-    pub fn new(
-        bounds: &WindowBounds,
-        ui_ratio: &UIRatio,
-        cursor_position: (f64, f64),
-    ) -> anyhow::Result<Self> {
-        if !position::check_in_window(cursor_position.0, cursor_position.1, bounds) {
-            return Err(anyhow::anyhow!("Cursor is not in the window"));
-        }
-
+    pub fn new(bounds: &WindowBounds, ui_ratio: &UIRatio, cursor_position: (f64, f64)) -> Self {
         let ui_position = UIPosition::new(ui_ratio, bounds);
-        Ok(ActionContext {
+        ActionContext {
             cursor_position,
             ui_position,
-        })
+        }
     }
 
     /// Execute all steps in an ActionDefinition.

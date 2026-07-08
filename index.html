@@ -1,43 +1,73 @@
 <!doctype html>
-<html lang="en">
+<html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
     <link rel="stylesheet" href="/src/styles.css" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Tauri App</title>
+    <title>Arknights Frame Assistant</title>
     <script type="module" src="/src/main.ts" defer></script>
   </head>
-
   <body>
-    <main class="container">
-      <h1>Welcome to Tauri</h1>
-
-      <div class="row">
-        <a href="https://vite.dev" target="_blank">
-          <img src="/src/assets/vite.svg" class="logo vite" alt="Vite logo" />
-        </a>
-        <a href="https://tauri.app" target="_blank">
-          <img
-            src="/src/assets/tauri.svg"
-            class="logo tauri"
-            alt="Tauri logo"
-          />
-        </a>
-        <a href="https://www.typescriptlang.org/docs" target="_blank">
-          <img
-            src="/src/assets/typescript.svg"
-            class="logo typescript"
-            alt="typescript logo"
-          />
-        </a>
+    <!-- Status Bar -->
+    <header class="status-bar drag-region">
+      <div class="status-bar__left">
+        <span class="profile-badge" id="profile-badge" data-i18n="profile.regular">常规作战</span>
       </div>
-      <p>Click on the Tauri logo to learn more about the framework</p>
+      <div class="status-bar__right">
+        <label class="toggle no-drag">
+          <input type="checkbox" id="hotkey-toggle" />
+          <span class="toggle__slider"></span>
+          <span class="toggle__label" data-i18n="label.hotkey">热键</span>
+        </label>
+      </div>
+    </header>
 
-      <form class="row" id="greet-form">
-        <input id="greet-input" placeholder="Enter a name..." />
-        <button type="submit">Greet</button>
-      </form>
-      <p id="greet-msg"></p>
+    <main class="content">
+      <!-- Tab Bar -->
+      <nav class="tab-bar">
+        <button class="tab" data-tab="regular" data-i18n="profile.RegularOperations">常规作战</button>
+        <button class="tab" data-tab="garrison" disabled data-i18n="profile.GarrisonProtocol">卫戍协议</button>
+        <button class="tab" data-tab="calibrate" data-i18n="section.calibrate">UI校准</button>
+      </nav>
+
+      <!-- Tab Panels -->
+      <div class="tab-panel active" id="panel-calibrate">
+        <section class="glass-panel">
+          <h2 class="panel-title" data-i18n="section.calibration">UI 校准</h2>
+          <div class="ratio-grid" id="ratio-grid"></div>
+        </section>
+      </div>
+
+      <div class="tab-panel" id="panel-regular">
+        <section class="glass-panel">
+          <h2 class="panel-title" data-i18n="section.keybinds">快捷键</h2>
+          <ul class="keybind-list" id="keybind-list"></ul>
+        </section>
+      </div>
+
+      <div class="tab-panel" id="panel-garrison">
+        <section class="glass-panel">
+          <p class="placeholder-text" data-i18n="garrison.placeholder">卫戍协议尚未实现</p>
+        </section>
+      </div>
     </main>
+
+    <!-- Footer -->
+    <footer class="footer">
+      <span class="status-dot" id="status-dot"></span>
+      <span class="status-text" id="status-text"></span>
+    </footer>
+
+    <!-- Toast Container -->
+    <div class="toast-container" id="toast-container"></div>
+
+    <!-- Key Capture Overlay -->
+    <div class="overlay hidden no-drag" id="key-overlay">
+      <div class="overlay__box">
+        <p data-i18n="overlay.prompt">按下要绑定的按键…</p>
+        <p class="overlay__hint" data-i18n="overlay.noSideButton">不支持鼠标侧键</p>
+        <button class="btn btn--secondary btn--sm" id="key-overlay-cancel" data-i18n="btn.cancel">取消</button>
+      </div>
+    </div>
   </body>
 </html>

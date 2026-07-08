@@ -1,116 +1,514 @@
-.logo.vite:hover {
-  filter: drop-shadow(0 0 2em #747bff);
-}
-
-.logo.typescript:hover {
-  filter: drop-shadow(0 0 2em #2d79c7);
-}
+/* ── 基础变量与日/夜间自适应 ── */
 :root {
-  font-family: Inter, Avenir, Helvetica, Arial, sans-serif;
-  font-size: 16px;
-  line-height: 24px;
-  font-weight: 400;
-
-  color: #0f0f0f;
-  background-color: #f6f6f6;
-
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-  -webkit-text-size-adjust: 100%;
+  --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
+  --font-mono: "SF Mono", "Menlo", "Consolas", monospace;
+  --radius: 12px;
+  --traffic-light-width: 80px;
+  --transition-fast: 150ms ease;
+  --transition-normal: 250ms ease;
+  --color-accent: #007aff;
+  --color-success: #34c759;
+  --color-warning: #ff9500;
+  --color-danger: #ff3b30;
 }
 
-.container {
+/* ── 夜间模式 (Dark) ── */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-text: rgba(255, 255, 255, 0.95);
+    --color-text-secondary: rgba(255, 255, 255, 0.55);
+    --color-text-disabled: rgba(255, 255, 255, 0.30);
+    --color-glass: rgba(30, 30, 32, 0.70);
+    --color-glass-hover: rgba(60, 60, 64, 0.70);
+    --color-glass-active: rgba(20, 20, 22, 0.80);
+    --color-glass-item: rgba(255, 255, 255, 0.06);
+    --color-glass-item-hover: rgba(255, 255, 255, 0.10);
+    --color-border: rgba(255, 255, 255, 0.08);
+  }
+}
+
+/* ── 日间模式 (Light) ── */
+@media (prefers-color-scheme: light) {
+  :root {
+    --color-text: rgba(0, 0, 0, 0.85);
+    --color-text-secondary: rgba(0, 0, 0, 0.50);
+    --color-text-disabled: rgba(0, 0, 0, 0.25);
+    --color-glass: rgba(255, 255, 255, 0.65);
+    --color-glass-hover: rgba(235, 235, 240, 0.75);
+    --color-glass-active: rgba(220, 220, 225, 0.85);
+    --color-glass-item: rgba(0, 0, 0, 0.04);
+    --color-glass-item-hover: rgba(0, 0, 0, 0.08);
+    --color-border: rgba(0, 0, 0, 0.08);
+  }
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
   margin: 0;
-  padding-top: 10vh;
+  padding: 0;
+}
+
+html,
+body {
+  background: transparent;
+  color: var(--color-text);
+  font-family: var(--font);
+  font-size: 13px;
+  line-height: 1.5;
+  height: 100vh;
+  overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
   display: flex;
   flex-direction: column;
-  justify-content: center;
-  text-align: center;
 }
 
-.logo {
-  height: 6em;
-  padding: 1.5em;
-  will-change: filter;
-  transition: 0.75s;
+/* ── 玻璃面板 ── */
+.glass-panel {
+  background: var(--color-glass);
+  backdrop-filter: blur(24px) saturate(180%);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  border-radius: var(--radius);
+  border: 0.5px solid var(--color-border);
+  padding: 16px;
 }
 
-.logo.tauri:hover {
-  filter: drop-shadow(0 0 2em #24c8db);
-}
-
-.row {
+.panel-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 12px;
   display: flex;
-  justify-content: center;
+  align-items: center;
+  justify-content: space-between;
 }
 
-a {
-  font-weight: 500;
-  color: #646cff;
-  text-decoration: inherit;
-}
-
-a:hover {
-  color: #535bf2;
-}
-
-h1 {
+.placeholder-text {
+  color: var(--color-text-disabled);
   text-align: center;
+  padding: 24px 0;
 }
 
-input,
-button {
-  border-radius: 8px;
-  border: 1px solid transparent;
-  padding: 0.6em 1.2em;
-  font-size: 1em;
-  font-weight: 500;
-  font-family: inherit;
-  color: #0f0f0f;
-  background-color: #ffffff;
-  transition: border-color 0.25s;
-  box-shadow: 0 2px 2px rgba(0, 0, 0, 0.2);
+/* ── 状态栏 ── */
+.status-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 26px 8px calc(var(--traffic-light-width) + 5px);
+  height: 35px;
+  flex-shrink: 0;
 }
 
-button {
+.status-bar__left,
+.status-bar__right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--color-danger);
+  transition: background var(--transition-normal);
+  flex-shrink: 0;
+}
+.status-dot.active {
+  background: var(--color-success);
+}
+
+.status-text {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+
+.profile-badge {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 10px;
+  border-radius: 20px;
+  background: var(--color-glass-item);
+  border: 0.5px solid var(--color-border);
+}
+
+/* ── 开关 ── */
+.toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   cursor: pointer;
 }
 
-button:hover {
-  border-color: #396cd8;
-}
-button:active {
-  border-color: #396cd8;
-  background-color: #e8e8e8;
+.toggle input {
+  display: none;
 }
 
-input,
-button {
+.toggle__slider {
+  width: 34px;
+  height: 20px;
+  border-radius: 20px;
+  background: rgba(120, 120, 128, 0.3);
+  position: relative;
+  transition: background var(--transition-fast);
+}
+
+.toggle__slider::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  transition: transform var(--transition-fast);
+}
+
+.toggle input:checked + .toggle__slider {
+  background: var(--color-accent);
+}
+
+.toggle input:checked + .toggle__slider::after {
+  transform: translateX(14px);
+}
+
+.toggle__label {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+
+/* ── Tab 栏 ── */
+.tab-bar {
+  display: flex;
+  gap: 0;
+  background: var(--color-glass);
+  border-radius: var(--radius);
+  border: 0.5px solid var(--color-border);
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.tab {
+  flex: 1;
+  padding: 8px 0;
+  font-size: 12px;
+  font-weight: 500;
+  font-family: var(--font);
+  color: var(--color-text-secondary);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.tab.active {
+  color: var(--color-text);
+  background: var(--color-glass-active);
+}
+
+.tab:disabled {
+  color: var(--color-text-disabled);
+  cursor: not-allowed;
+}
+
+.tab:not(:disabled):hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.tab-panel {
+  display: none;
+}
+.tab-panel.active {
+  display: block;
+}
+
+/* ── 主内容区 ── */
+.content {
+  padding: 0 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-bottom: 6px;
+}
+
+/* ── 快捷键列表 ── */
+.keybind-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.keybind-item {
+  display: flex;
+  align-items: center;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: var(--color-glass-item);
+  transition: background var(--transition-fast);
+}
+
+.keybind-item:hover {
+  background: var(--color-glass-item-hover);
+}
+
+.keybind-item__name {
+  flex: 1;
+  font-size: 13px;
+  color: var(--color-text);
+}
+
+.keybind-item__key {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  padding: 3px 10px;
+  border-radius: 6px;
+  background: rgba(120, 120, 128, 0.15);
+  color: var(--color-text);
+  min-width: 44px;
+  text-align: center;
+  margin-right: 8px;
+}
+
+.keybind-item__actions {
+  display: flex;
+  gap: 6px;
+  width: auto;
+  min-width: 56px;
+  flex-shrink: 0;
+  justify-content: flex-end;
+}
+
+/* ── 校准列表（参考快捷键布局） ── */
+.ratio-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ratio-item {
+  display: flex;
+  align-items: center;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: var(--color-glass-item);
+  transition: background var(--transition-fast);
+}
+
+.ratio-item:hover {
+  background: var(--color-glass-item-hover);
+}
+
+.ratio-item__label {
+  flex: 1;
+  font-size: 13px;
+  color: var(--color-text);
+}
+
+.ratio-item__inputs {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.ratio-item__input-wrapper {
+  display: flex;
+  align-items: center;
+  background: var(--color-glass-item);
+  border: 0.5px solid var(--color-border);
+  border-radius: 6px;
+  overflow: hidden;
+  transition: border-color var(--transition-fast), background var(--transition-fast);
+  flex: 1;
+}
+
+.ratio-item__input-wrapper:focus-within {
+  border-color: var(--color-accent);
+  background: var(--color-glass-active);
+}
+
+.ratio-item__axis-label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: bold;
+  padding-left: 8px;
+  color: var(--color-text-disabled);
+  user-select: none;
+}
+
+.ratio-item__input {
+  width: 100%;
+  padding: 4px 6px 4px 4px;
+  font-size: 13px;
+  font-family: var(--font-mono);
+  color: var(--color-text);
+  background: transparent;
+  border: none;
   outline: none;
 }
 
-#greet-input {
-  margin-right: 5px;
+/* ── 按钮 ── */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 6px 14px;
+  font-size: 12px;
+  font-weight: 500;
+  font-family: var(--font);
+  color: var(--color-text);
+  background: var(--color-glass-item);
+  border: 0.5px solid var(--color-border);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    color: #f6f6f6;
-    background-color: #2f2f2f;
-  }
+.btn:hover {
+  background: var(--color-glass-hover);
+}
 
-  a:hover {
-    color: #24c8db;
-  }
+.btn:active {
+  background: var(--color-glass-active);
+}
 
-  input,
-  button {
-    color: #ffffff;
-    background-color: #0f0f0f98;
+.btn--secondary {
+  background: transparent;
+  border-color: transparent;
+  color: var(--color-text-secondary);
+}
+
+.btn--secondary:hover {
+  background: var(--color-glass-item-hover);
+  color: var(--color-text);
+}
+
+.btn--sm {
+  padding: 3px 10px;
+  font-size: 11px;
+  border-radius: 6px;
+}
+
+/* 校准按钮激活态 */
+.btn.calibrating {
+  background: var(--color-accent);
+  color: #fff;
+  border-color: var(--color-accent);
+}
+
+/* ── 底部工具栏 ── */
+.footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 16px;
+  flex-shrink: 0;
+  background: var(--color-glass);
+  backdrop-filter: blur(24px) saturate(180%);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  border-top: 0.5px solid var(--color-border);
+  z-index: 10;
+}
+
+.footer .status-text {
+  font-size: 11px;
+  color: var(--color-text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Toast ── */
+.toast-container {
+  position: fixed;
+  bottom: 60px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 100;
+}
+
+.toast {
+  padding: 6px 16px;
+  font-size: 12px;
+  border-radius: 20px;
+  background: var(--color-glass-active);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 0.5px solid var(--color-border);
+  color: var(--color-text);
+  animation: toast-in var(--transition-normal) ease forwards;
+  white-space: nowrap;
+}
+
+.toast--warning {
+  border-color: rgba(255, 159, 10, 0.3);
+  color: var(--color-warning);
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
   }
-  button:active {
-    background-color: #0f0f0f69;
+  to {
+    opacity: 1;
+    transform: translateY(0);
   }
+}
+
+/* ── 按键捕获遮罩 ── */
+.overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(8px);
+  z-index: 200;
+}
+
+.overlay.hidden {
+  display: none;
+}
+
+.overlay__box {
+  text-align: center;
+  padding: 32px 48px;
+  border-radius: var(--radius);
+  background: var(--color-glass);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 0.5px solid var(--color-border);
+}
+
+.overlay__hint {
+  font-size: 11px;
+  color: var(--color-text-disabled);
+  margin-top: 8px;
+  margin-bottom: 16px;
+}
+
+/* ── 滚动条 ── */
+::-webkit-scrollbar {
+  width: 4px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(120, 120, 128, 0.25);
+  border-radius: 2px;
 }
