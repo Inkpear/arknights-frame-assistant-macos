@@ -1,6 +1,7 @@
 use std::{collections::HashMap, sync::atomic::AtomicBool};
 
 use tauri::{Emitter, Manager, WebviewWindowBuilder, WebviewUrl};
+use tauri::window::{Effect, EffectState, EffectsBuilder};
 use tokio::sync::{RwLock, broadcast};
 
 use crate::{
@@ -182,11 +183,11 @@ impl AppState {
     }
 
     /// Toggle the settings window. On first open, creates the WebView
-    /// (lazy init); on close, destroys it to free memory (~22 MB).
+    /// (lazy init); hides instead of closing to keep the app alive.
     pub async fn toggle_window(&self) {
         if let Some(window) = self.app_handle.get_webview_window("main") {
             if window.is_visible().unwrap_or(false) {
-                window.close().ok();
+                window.hide().ok();
             } else {
                 window.show().ok();
                 window.set_focus().ok();
@@ -205,6 +206,13 @@ impl AppState {
             .title_bar_style(tauri::TitleBarStyle::Overlay)
             .hidden_title(true)
             .traffic_light_position(tauri::LogicalPosition::new(16.0, 18.0))
+            .effects(
+                EffectsBuilder::default()
+                    .effect(Effect::HudWindow)
+                    .radius(14.0)
+                    .state(EffectState::Active)
+                    .build(),
+            )
             .build()
             {
                 Ok(_) => {}

@@ -30,6 +30,12 @@ pub fn run() {
             ipc::commands::reset_config,
             ipc::commands::shutdown,
         ])
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                api.prevent_close();
+                window.hide().ok();
+            }
+        })
         .setup(move |app| {
             let handle = app.handle().clone();
 
