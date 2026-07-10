@@ -7,10 +7,15 @@
  */
 import { logUI } from "./debug";
 import { t } from "./i18n";
-import { $, KEYBIND_DEFS, keybindOverrides, ratios, status } from "./state";
+import { $ } from "./dom";
+import { KEYBIND_DEFS, keybindOverrides, ratios, status, keybindsVersion, ratiosVersion } from "./state";
 import { keyLabel } from "./keybind";
 
-/** Full re-render of all dynamic sections. */
+// Last-rendered versions; when unchanged, the rebuild is skipped (P1).
+let lastKeybindsVersion = -1;
+let lastRatiosVersion = -1;
+
+/** Full re-render of dynamic sections (incremental where data is unchanged). */
 export function refreshUI() {
   renderFooter();
   renderHeader();
@@ -35,7 +40,6 @@ export function renderFooter() {
   } else {
     text.textContent = status.window.is_arknights ? "…" : t("status.noWindow");
   }
-  logUI("render footer");
 }
 
 /** Header: profile badge + hotkey toggle. */
@@ -46,8 +50,10 @@ export function renderHeader() {
   toggle.checked = status.hotkey_enabled;
 }
 
-/** Keybind list: each action shows its label + current key + rebind/reset buttons. */
+/** Keybind list: rebuilt only when keybind data changed. Preserves focus. */
 export function renderKeybinds() {
+  if (lastKeybindsVersion === keybindsVersion) return;
+  lastKeybindsVersion = keybindsVersion;
   const list = $("#keybind-list");
   list.innerHTML = KEYBIND_DEFS.map((d) => {
     const custom = keybindOverrides.get(d.actionId);
@@ -63,11 +69,12 @@ export function renderKeybinds() {
       </span>
     </li>`;
   }).join("");
-  logUI("render keybinds");
 }
 
-/** Ratio grid: X/Y readonly inputs + per-element calibrate + reset buttons. */
+/** Ratio grid: rebuilt only when ratio data changed. */
 export function renderRatios() {
+  if (lastRatiosVersion === ratiosVersion) return;
+  lastRatiosVersion = ratiosVersion;
   const grid = $("#ratio-grid");
   grid.innerHTML = ratios
     .map(
@@ -91,7 +98,6 @@ export function renderRatios() {
     </div>`
     )
     .join("");
-  logUI("render ratios");
 }
 
 /** Update ratio input values in-place without recreating DOM. */
@@ -124,6 +130,4 @@ export function renderTabs() {
   if (regPanel) regPanel.classList.toggle("active", isRegular);
   if (garPanel) garPanel.classList.toggle("active", !isRegular);
   if (calPanel) calPanel.classList.remove("active");
-
-  logUI("render tabs");
 }

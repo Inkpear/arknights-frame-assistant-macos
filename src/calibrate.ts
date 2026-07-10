@@ -1,7 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import { logIpc } from "./debug";
 import { t } from "./i18n";
-import { isTauri, $, displayToast, ratios, status } from "./state";
+import { $, displayToast } from "./dom";
+import { ratios, status } from "./state";
 
 /** The ratioType currently being calibrated, or null. */
 let activeTarget: string | null = null;
@@ -13,9 +14,9 @@ export function startCalibratingItem(ratioType: string) {
   }
   activeTarget = ratioType;
   logIpc("→", "set_calibrating_target", { target: ratioType });
-  if (isTauri()) invoke("set_calibrating_target", { target: ratioType }).catch(() => {});
+  invoke("set_calibrating_target", { target: ratioType }).catch(() => {});
   logIpc("→", "set_calibrating_mode_enabled", { enabled: true });
-  if (isTauri()) invoke("set_calibrating_mode_enabled", { enabled: true }).catch(() => {});
+  invoke("set_calibrating_mode_enabled", { enabled: true }).catch(() => {});
   displayToast(t("toast.calibrateOn"));
 }
 

@@ -6,7 +6,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { logIpc } from "./debug";
 import { t } from "./i18n";
-import { isTauri, $, displayToast } from "./state";
+import { $, displayToast } from "./dom";
 
 export function initRatioModule() {
   // Reset a single ratio element to its default
@@ -17,7 +17,6 @@ export function initRatioModule() {
       const type = btn.dataset.id!;
       logIpc("→", "reset_ui_ratio", { ratioType: type });
       displayToast(t("toast.ratioReset", t(`ratio.${type}`)));
-      if (!isTauri()) return;
       invoke("reset_ui_ratio", { ratioType: type }).catch((err) =>
         console.error("reset_ui_ratio failed:", err)
       );

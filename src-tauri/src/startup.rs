@@ -1,8 +1,9 @@
 use mado::{MonitorConfig, WindowBounds, WindowMonitor};
+use tauri::path::BaseDirectory;
 use tauri::{Manager, State};
 
 use crate::config::AppConfig;
-use crate::desktop::tray::TrayMenuItemHandles;
+use crate::desktop::TrayMenuItemHandles;
 use crate::ipc;
 use crate::ipc::protocol::UIRatioPayload;
 use crate::touch_core::action::ActionContext;
@@ -38,7 +39,11 @@ pub fn run() {
         .setup(move |app| {
             let handle = app.handle().clone();
 
-            let config = AppConfig::load().unwrap_or_default();
+            let config_dir = app
+                .path()
+                .resolve("", BaseDirectory::AppConfig)
+                .unwrap_or_else(|_| std::env::temp_dir());
+            let config = AppConfig::load(config_dir).unwrap_or_default();
             let app_state = AppState::new(config, handle.clone());
             let tray_menu_handles =
                 TrayMenuItemHandles::new(app).expect("Failed to build tray menu");
@@ -77,23 +82,23 @@ async fn start_event_listener(app_handle: tauri::AppHandle) -> anyhow::Result<()
     loop {
         tokio::select! {
             _ = shutdown_signal.recv() => {
-                log::info!("Received shutdown signal, shutting down event listener...");
+                log::info!("Event listener shutting down");
                 break;
             }
             event = stream.next() => {
                 if event.is_none() {
-                    log::error!("Event stream ended unexpectedly.");
+                    log::error!("Event stream ended unexpectedly");
                     break;
                 }
                 let event = event.unwrap();
                 log::debug!("Received event: {:?}", event);
                 if app_state.is_calibrating_mode_enabled() {
                     if let Err(e) = handle_event_with_calibrating_mode(app_state.clone(), event).await {
-                        log::error!("Error handling event in calibrating mode: {e}");
+                        log::error!("Calibrating event handler failed: {e}");
                     }
                 } else {
                     if let Err(e) = handle_event(app_state.clone(), event).await {
-                        log::error!("Error handling event: {e}");
+                        log::error!("Event handler failed: {e}");
                     }
                 }
             }
@@ -126,13 +131,12 @@ async fn start_window_monitor(app_handle: tauri::AppHandle) {
         }
     });
     let _ = shutdown_rx.recv().await;
-    log::info!("Received shutdown signal, shutting down window monitor...");
+    log::info!("Window monitor shutting down");
     WindowMonitor::stop().ok();
 }
 
 /// Handle a single CGEventItem, executing the corresponding action if applicable.
 async fn handle_event(app_state: State<'_, AppState>, event: CGEventItem) -> anyhow::Result<()> {
-    log::debug!("Received event: {:?}", event);
     if !app_state.is_hotkey_enabled() {
         log::debug!("Hotkey is disabled, ignoring event");
         return Ok(());
@@ -157,21 +161,18 @@ async fn handle_event(app_state: State<'_, AppState>, event: CGEventItem) -> any
         return Ok(());
     }
     let action = action.unwrap();
-    let action_ctx: ActionContext;
-    {
-        action_ctx = ActionContext::new(
-            &window_bounds,
-            &app_state.config.read().await.effective_ui_ratio(),
-            (event.location.x, event.location.y),
-        );
-    }
+    let action_ctx = ActionContext::new(
+        &window_bounds,
+        &app_state.config.read().await.effective_ui_ratio(),
+        (event.location.x, event.location.y),
+    );
 
-    log::info!("Executing action: {}", action.get_action_id());
-    log::debug!("{:?}", action.get_steps());
+    log::info!("Executing action: {}", action.action_id);
+    log::debug!("{:?}", action.steps);
 
     action_ctx.execute_action(action)?;
 
-    log::info!("Action {} executed successfully", action.get_action_id());
+    log::info!("Action {} executed successfully", action.action_id);
 
     Ok(())
 }

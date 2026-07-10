@@ -13,56 +13,114 @@
 import { invoke } from "@tauri-apps/api/core";
 import { logIpc } from "./debug";
 import { t } from "./i18n";
-import { isTauri, $, displayToast, keybindOverrides } from "./state";
+import { $, displayToast } from "./dom";
+import { keybindOverrides, notifyKeybindsChanged, KEYBIND_DEFS } from "./state";
 import { renderKeybinds } from "./render";
 
-// ── CGKeyCode → display label ──
-const KEY_LABELS: Record<number, string> = {
-  0x00: "A", 0x01: "S", 0x02: "D", 0x03: "F", 0x04: "H",
-  0x05: "G", 0x06: "Z", 0x07: "X", 0x08: "C", 0x09: "V",
-  0x0B: "B", 0x0C: "Q", 0x0D: "W", 0x0E: "E", 0x0F: "R",
-  0x10: "Y", 0x11: "T",
-  0x12: "1", 0x13: "2", 0x14: "3", 0x15: "4", 0x16: "6",
-  0x17: "5", 0x18: "=", 0x19: "9", 0x1A: "7", 0x1B: "-",
-  0x1C: "8", 0x1D: "0", 0x1E: "]", 0x1F: "O", 0x20: "U",
-  0x21: "[", 0x22: "I", 0x23: "P", 0x24: "Return", 0x25: "L",
-  0x26: "J", 0x27: "'", 0x28: "K", 0x29: ";", 0x2A: "\\",
-  0x2B: ",", 0x2C: "/", 0x2D: "N", 0x2E: "M", 0x2F: ".",
-  0x30: "Tab", 0x31: "Space", 0x32: "`", 0x33: "Delete",
-  0x35: "Escape", 0x36: "R-Cmd", 0x37: "Cmd", 0x38: "Shift",
-  0x39: "CapsLock", 0x3A: "Option", 0x3B: "Ctrl",
-  0x7A: "F1", 0x78: "F2", 0x63: "F3", 0x76: "F4",
-  0x60: "F5", 0x61: "F6", 0x62: "F7", 0x64: "F8",
-  0x65: "F9", 0x6D: "F10", 0x67: "F11", 0x6F: "F12",
-  0x7B: "←", 0x7C: "→", 0x7D: "↓", 0x7E: "↑",
-};
+// ── Single source of truth: label + KeyboardEvent.code for each CGKeyCode ──
+const KEY_TABLE: { code: number; label: string; eventCode?: string }[] = [
+  { code: 0x00, label: "A", eventCode: "KeyA" },
+  { code: 0x01, label: "S", eventCode: "KeyS" },
+  { code: 0x02, label: "D", eventCode: "KeyD" },
+  { code: 0x03, label: "F", eventCode: "KeyF" },
+  { code: 0x04, label: "H", eventCode: "KeyH" },
+  { code: 0x05, label: "G", eventCode: "KeyG" },
+  { code: 0x06, label: "Z", eventCode: "KeyZ" },
+  { code: 0x07, label: "X", eventCode: "KeyX" },
+  { code: 0x08, label: "C", eventCode: "KeyC" },
+  { code: 0x09, label: "V", eventCode: "KeyV" },
+  { code: 0x0B, label: "B", eventCode: "KeyB" },
+  { code: 0x0C, label: "Q", eventCode: "KeyQ" },
+  { code: 0x0D, label: "W", eventCode: "KeyW" },
+  { code: 0x0E, label: "E", eventCode: "KeyE" },
+  { code: 0x0F, label: "R", eventCode: "KeyR" },
+  { code: 0x10, label: "Y", eventCode: "KeyY" },
+  { code: 0x11, label: "T", eventCode: "KeyT" },
+  { code: 0x12, label: "1", eventCode: "Digit1" },
+  { code: 0x13, label: "2", eventCode: "Digit2" },
+  { code: 0x14, label: "3", eventCode: "Digit3" },
+  { code: 0x15, label: "4", eventCode: "Digit4" },
+  { code: 0x16, label: "6", eventCode: "Digit6" },
+  { code: 0x17, label: "5", eventCode: "Digit5" },
+  { code: 0x18, label: "=", eventCode: "Equal" },
+  { code: 0x19, label: "9", eventCode: "Digit9" },
+  { code: 0x1A, label: "7", eventCode: "Digit7" },
+  { code: 0x1B, label: "-", eventCode: "Minus" },
+  { code: 0x1C, label: "8", eventCode: "Digit8" },
+  { code: 0x1D, label: "0", eventCode: "Digit0" },
+  { code: 0x1E, label: "]", eventCode: "BracketRight" },
+  { code: 0x1F, label: "O", eventCode: "KeyO" },
+  { code: 0x20, label: "U", eventCode: "KeyU" },
+  { code: 0x21, label: "[", eventCode: "BracketLeft" },
+  { code: 0x22, label: "I", eventCode: "KeyI" },
+  { code: 0x23, label: "P", eventCode: "KeyP" },
+  { code: 0x24, label: "Return", eventCode: "Enter" },
+  { code: 0x25, label: "L", eventCode: "KeyL" },
+  { code: 0x26, label: "J", eventCode: "KeyJ" },
+  { code: 0x27, label: "'", eventCode: "Quote" },
+  { code: 0x28, label: "K", eventCode: "KeyK" },
+  { code: 0x29, label: ";", eventCode: "Semicolon" },
+  { code: 0x2A, label: "\\", eventCode: "Backslash" },
+  { code: 0x2B, label: ",", eventCode: "Comma" },
+  { code: 0x2C, label: "/", eventCode: "Slash" },
+  { code: 0x2D, label: "N", eventCode: "KeyN" },
+  { code: 0x2E, label: "M", eventCode: "KeyM" },
+  { code: 0x2F, label: ".", eventCode: "Period" },
+  { code: 0x30, label: "Tab", eventCode: "Tab" },
+  { code: 0x31, label: "Space", eventCode: "Space" },
+  { code: 0x32, label: "`", eventCode: "Backquote" },
+  { code: 0x33, label: "Delete", eventCode: "Backspace" },
+  { code: 0x35, label: "Escape", eventCode: "Escape" },
+  { code: 0x36, label: "R-Cmd", eventCode: "MetaRight" },
+  { code: 0x37, label: "Cmd", eventCode: "MetaLeft" },
+  { code: 0x38, label: "Shift", eventCode: "ShiftLeft" },
+  { code: 0x39, label: "CapsLock" },
+  { code: 0x3A, label: "Option", eventCode: "AltLeft" },
+  { code: 0x3B, label: "Ctrl", eventCode: "ControlLeft" },
+  { code: 0x3C, label: "R-Shift", eventCode: "ShiftRight" },
+  { code: 0x3D, label: "R-Option", eventCode: "AltRight" },
+  { code: 0x3E, label: "R-Ctrl", eventCode: "ControlRight" },
+  { code: 0x7A, label: "F1", eventCode: "F1" },
+  { code: 0x78, label: "F2", eventCode: "F2" },
+  { code: 0x63, label: "F3", eventCode: "F3" },
+  { code: 0x76, label: "F4", eventCode: "F4" },
+  { code: 0x60, label: "F5", eventCode: "F5" },
+  { code: 0x61, label: "F6", eventCode: "F6" },
+  { code: 0x62, label: "F7", eventCode: "F7" },
+  { code: 0x64, label: "F8", eventCode: "F8" },
+  { code: 0x65, label: "F9", eventCode: "F9" },
+  { code: 0x6D, label: "F10", eventCode: "F10" },
+  { code: 0x67, label: "F11", eventCode: "F11" },
+  { code: 0x6F, label: "F12", eventCode: "F12" },
+  { code: 0x7B, label: "←", eventCode: "ArrowLeft" },
+  { code: 0x7C, label: "→", eventCode: "ArrowRight" },
+  { code: 0x7D, label: "↓", eventCode: "ArrowDown" },
+  { code: 0x7E, label: "↑", eventCode: "ArrowUp" },
+];
+
+// Derived: CGKeyCode → display label
+const KEY_LABELS: Record<number, string> = Object.fromEntries(
+  KEY_TABLE.map((k) => [k.code, k.label])
+);
+// Derived: KeyboardEvent.code → CGKeyCode
+const KEYCODE_MAP: Record<string, number> = Object.fromEntries(
+  KEY_TABLE.filter((k) => k.eventCode).map((k) => [k.eventCode!, k.code])
+);
 
 export function keyLabel(code: number): string {
   return KEY_LABELS[code] ?? String.fromCharCode(code);
 }
 
-// ── KeyboardEvent.code → CGKeyCode ──
-const KEYCODE_MAP: Record<string, number> = {
-  KeyA: 0x00, KeyS: 0x01, KeyD: 0x02, KeyF: 0x03, KeyH: 0x04,
-  KeyG: 0x05, KeyZ: 0x06, KeyX: 0x07, KeyC: 0x08, KeyV: 0x09,
-  KeyB: 0x0B, KeyQ: 0x0C, KeyW: 0x0D, KeyE: 0x0E, KeyR: 0x0F,
-  KeyY: 0x10, KeyT: 0x11,
-  Digit1: 0x12, Digit2: 0x13, Digit3: 0x14, Digit4: 0x15, Digit6: 0x16,
-  Digit5: 0x17, Equal: 0x18, Digit9: 0x19, Digit7: 0x1A, Minus: 0x1B,
-  Digit8: 0x1C, Digit0: 0x1D, BracketRight: 0x1E, KeyO: 0x1F, KeyU: 0x20,
-  BracketLeft: 0x21, KeyI: 0x22, KeyP: 0x23, Enter: 0x24, KeyL: 0x25,
-  KeyJ: 0x26, Quote: 0x27, KeyK: 0x28, Semicolon: 0x29, Backslash: 0x2A,
-  Comma: 0x2B, Slash: 0x2C, KeyN: 0x2D, KeyM: 0x2E, Period: 0x2F,
-  Tab: 0x30, Space: 0x31, Backquote: 0x32, Backspace: 0x33,
-  Escape: 0x35, ShiftLeft: 0x38, ShiftRight: 0x3C,
-  ControlLeft: 0x3B, ControlRight: 0x3E,
-  AltLeft: 0x3A, AltRight: 0x3D,
-  MetaLeft: 0x37, MetaRight: 0x36,
-  F1: 0x7A, F2: 0x78, F3: 0x63, F4: 0x76,
-  F5: 0x60, F6: 0x61, F7: 0x62, F8: 0x64,
-  F9: 0x65, F10: 0x6D, F11: 0x67, F12: 0x6F,
-  ArrowLeft: 0x7B, ArrowRight: 0x7C, ArrowDown: 0x7D, ArrowUp: 0x7E,
-};
+// Derived: display label → CGKeyCode (for resolving default-key conflicts).
+const LABEL_TO_CODE: Record<string, number> = Object.fromEntries(
+  KEY_TABLE.map((k) => [k.label, k.code])
+);
+
+/** CGKeyCode for an action's default key label, or -1 if unknown. */
+function defaultKeycodeFor(actionId: string): number {
+  const def = KEYBIND_DEFS.find((d) => d.actionId === actionId);
+  return def ? (LABEL_TO_CODE[def.defaultKey] ?? -1) : -1;
+}
 
 /** Convert a KeyboardEvent into a CGKeyCode, or -1 if unsupported. */
 function keyCodeToU16(e: KeyboardEvent): number {
@@ -91,19 +149,29 @@ function handleKeyCapture(e: KeyboardEvent) {
     displayToast(t("toast.unsupportedKey"), true);
     return;
   }
-  // Check for duplicate binding
-  for (const [actionId, existing] of keybindOverrides) {
-    if (existing === kc && actionId !== pendingKeybind.actionId) {
-      if (!confirm(t("toast.keyConflict", t(`action.${actionId}`), t(`action.${pendingKeybind.actionId}`)))) {
+  // Check for duplicate binding against custom overrides AND other actions' defaults.
+  for (const def of KEYBIND_DEFS) {
+    if (def.actionId === pendingKeybind.actionId) continue;
+    const otherCustom = keybindOverrides.get(def.actionId);
+    const otherDefault = defaultKeycodeFor(def.actionId);
+    const otherKc = otherCustom ?? (otherDefault >= 0 ? otherDefault : -1);
+    if (otherKc === kc) {
+      if (
+        !confirm(t("toast.keyConflict", t(`action.${def.actionId}`), t(`action.${pendingKeybind.actionId}`)))
+      ) {
         closeKeyOverlay();
         e.preventDefault();
         return;
       }
-      keybindOverrides.delete(actionId);
+      // If the conflicting action had a custom override, clear it so the new
+      // binding wins; otherwise the conflict is with its default — the backend's
+      // build_keycode_map resolves it deterministically (custom wins, sorted).
+      if (otherCustom != null) keybindOverrides.delete(def.actionId);
       break;
     }
   }
   keybindOverrides.set(pendingKeybind.actionId, kc);
+  notifyKeybindsChanged();
   saveKeybinds();
   renderKeybinds();
   displayToast(t("toast.bound", t(`action.${pendingKeybind.actionId}`), keyLabel(kc)));
@@ -122,7 +190,6 @@ function handleMouseSideButton(e: MouseEvent) {
 
 /** Send current keybind overrides to backend (full replace, not delta). */
 function saveKeybinds() {
-  if (!isTauri()) return;
   const actions: { actionId: string; keycode: number }[] = [];
   keybindOverrides.forEach((keycode, actionId) => actions.push({ actionId, keycode }));
   logIpc("→", "update_custom_keycode", actions);
@@ -141,6 +208,7 @@ export function initKeybindModule() {
     if (action === "rebind") openKeyOverlay(id);
     if (action === "reset-key") {
       keybindOverrides.delete(id);
+      notifyKeybindsChanged();
       saveKeybinds();
       renderKeybinds();
       displayToast(t("toast.restored", t(`action.${id}`)));

@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "arknights-frame-assistant-macos",
+  "productName": "AFA",
   "version": "0.1.0",
   "identifier": "com.inkpear.arknights-frame-assistant-macos",
   "build": {
@@ -14,7 +14,7 @@
     "withGlobalTauri": true,
     "windows": [
       {
-        "title": "Arknights Frame Assistant",
+        "title": "AFA",
         "width": 720,
         "height": 560,
         "minWidth": 580,

@@ -1,3 +1,5 @@
+use std::sync::LazyLock;
+
 use mado::{WindowBounds, WindowEvent, WindowInfo, WindowListener};
 use tauri::{AppHandle, Manager};
 
@@ -16,22 +18,17 @@ pub struct WindowContext {
     pub is_arknights: bool,
 }
 
-/// Filter rules: app_name or window_title (lowercased) containing any of these → match.
-const WINDOW_FILTER_RULES: [&str; 2] = ["arknights", "明日方舟"];
-const WINDOW_FILTER_BLACKLIST: [&str; 3] = [
-    "明日方舟帧操",
-    "arknights-frame-assistant",
-    "Arknights Frame Assistant",
-];
+/// Filter rules (pre-lowercased) for matching the Arknights window.
+static WINDOW_FILTER_RULES: LazyLock<Vec<&'static str>> =
+    LazyLock::new(|| vec!["arknights", "明日方舟"]);
 
-/// Check if app_name or window_title matches any filter rule.
+/// Check if app_name or window_title matches any (pre-lowercased) filter.
 pub fn matches_rules(name: &Option<String>, title: &Option<String>, filters: &[&str]) -> bool {
-    let name_lower = name.as_ref().map(|s| s.to_lowercase());
-    let title_lower = title.as_ref().map(|s| s.to_lowercase());
+    let name_lower = name.as_ref().map(|s| s.trim().to_lowercase());
+    let title_lower = title.as_ref().map(|s| s.trim().to_lowercase());
     filters.iter().any(|rule| {
-        let rule = rule.to_lowercase();
-        name_lower.as_ref().is_some_and(|n| n.contains(&rule))
-            || title_lower.as_ref().is_some_and(|t| t.contains(&rule))
+        name_lower.as_ref().is_some_and(|n| n.eq(rule))
+            || title_lower.as_ref().is_some_and(|t| t.eq(rule))
     })
 }
 
@@ -51,8 +48,7 @@ impl WindowContext {
         self.app_name = info.app.name.clone();
         self.window_title = info.title.clone();
         self.window_bounds = info.bounds.clone();
-        self.is_arknights = matches_rules(&self.app_name, &self.window_title, &WINDOW_FILTER_RULES)
-            && !matches_rules(&self.app_name, &self.window_title, &WINDOW_FILTER_BLACKLIST);
+        self.is_arknights = matches_rules(&self.app_name, &self.window_title, &WINDOW_FILTER_RULES);
     }
 
     /// Mark as unavailable when window is destroyed or minimized.

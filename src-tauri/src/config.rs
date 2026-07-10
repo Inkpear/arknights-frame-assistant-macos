@@ -1,16 +1,13 @@
-use std::{collections::HashMap, sync::LazyLock};
+use std::{collections::HashMap, path::PathBuf};
 
 use serde::{Deserialize, Serialize};
 
 use crate::touch_core::position::UIRatio;
 
 const CONFIG_FILENAME: &str = "config.json";
-static APP_DIR: LazyLock<String> = LazyLock::new(|| {
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/Users".to_string());
-    format!("{home}/Library/Application Support/arknights-frame-assistant-macos")
-});
+const CONFIG_SUBDIR: &str = "configurations";
 
-/// Persistent application config.
+/// Persistent application config, resolved against an app-managed directory.
 #[derive(Deserialize, Serialize, Debug, Clone, Default)]
 #[serde(default)]
 pub struct AppConfig {
@@ -20,51 +17,60 @@ pub struct AppConfig {
     pub ui_ratio: Option<UIRatio>,
     pub regular_operations_keycode: Option<HashMap<String, u16>>,
     pub garrison_protocol_keycode: Option<HashMap<String, u16>>,
+    /// Directory used for load/save, supplied by the app at startup.
+    #[serde(skip)]
+    pub config_dir: PathBuf,
 }
 
 impl AppConfig {
-    /// Load from path/configurations/config.json, returns default if not found.
-    pub fn load() -> anyhow::Result<Self> {
-        let config_path = std::path::Path::new(&*APP_DIR)
-            .join("configurations")
-            .join(CONFIG_FILENAME);
-        match std::fs::read_to_string(&config_path) {
-            Ok(content) => serde_json::from_str(&content)
-                .map_err(|e| anyhow::anyhow!("Failed to parse {}: {}", config_path.display(), e)),
-            Err(_) => Ok(Self::default()),
-        }
+    fn config_path(&self) -> PathBuf {
+        self.config_dir.join(CONFIG_SUBDIR).join(CONFIG_FILENAME)
     }
 
-    /// Save to path/configurations/config.json.
+    /// Load from `<config_dir>/configurations/config.json`, returns default if missing.
+    pub fn load(config_dir: PathBuf) -> anyhow::Result<Self> {
+        let mut config: Self = if let Ok(content) =
+            std::fs::read_to_string(config_dir.join(CONFIG_SUBDIR).join(CONFIG_FILENAME))
+        {
+            serde_json::from_str(&content)
+                .map_err(|e| anyhow::anyhow!("Failed to parse config: {}", e))?
+        } else {
+            Self::default()
+        };
+        config.config_dir = config_dir;
+        Ok(config)
+    }
+
+    /// Save to `<config_dir>/configurations/config.json`.
     pub fn save(&self) -> anyhow::Result<()> {
-        let config_dir = std::path::Path::new(&*APP_DIR).join("configurations");
-        std::fs::create_dir_all(&config_dir)?;
-        let config_path = config_dir.join(CONFIG_FILENAME);
+        let dir = self.config_dir.join(CONFIG_SUBDIR);
+        std::fs::create_dir_all(&dir)?;
+        let path = self.config_path();
         let data = serde_json::to_string_pretty(self)
             .map_err(|e| anyhow::anyhow!("Failed to serialize config: {}", e))?;
-        std::fs::write(&config_path, data)
-            .map_err(|e| anyhow::anyhow!("Failed to write {}: {}", config_path.display(), e))?;
+        std::fs::write(&path, data)
+            .map_err(|e| anyhow::anyhow!("Failed to write {}: {}", path.display(), e))?;
+        log::debug!("Saved config to {}", path.display());
         Ok(())
     }
 
-    /// Update the custom keycode map for the current profile.
+    /// Replace the custom keycode map for the current profile.
+    /// An empty slice clears the map; a non-empty slice replaces it entirely.
     pub fn update_custom_keycode(&mut self, new_keycodes: &[(String, u16)]) {
-        if new_keycodes.is_empty() {
-            match self.current_profile {
-                AppConfigType::RegularOperations => self.regular_operations_keycode = None,
-                AppConfigType::GarrisonProtocol => self.garrison_protocol_keycode = None,
-            }
-            return;
-        }
         let map_ref = match self.current_profile {
             AppConfigType::RegularOperations => &mut self.regular_operations_keycode,
             AppConfigType::GarrisonProtocol => &mut self.garrison_protocol_keycode,
         };
 
-        let map = map_ref.get_or_insert_with(HashMap::new);
+        if new_keycodes.is_empty() {
+            *map_ref = None;
+            return;
+        }
+        let mut map = HashMap::new();
         for (action_id, keycode) in new_keycodes {
             map.insert(action_id.clone(), *keycode);
         }
+        *map_ref = Some(map);
     }
 
     /// Get the current profile and its custom keycode map.

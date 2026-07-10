@@ -12,24 +12,14 @@ import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { logIpc, logUI } from "./debug";
 import { setLang, applyI18n, t } from "./i18n";
-import { $, displayToast, status, ratios, applyRemoteStatus, AppStatus, isTauri } from "./state";
+import { $, displayToast, isTauri } from "./dom";
+import { status, ratios, applyRemoteStatus, AppStatus } from "./state";
 import { refreshUI, updateRatioInputs } from "./render";
 import { initKeybindModule } from "./keybind";
 import { initRatioModule } from "./ratio";
 import { initCalibrateModule, reapplyCalibratingState, handleStatusChanged } from "./calibrate";
 
 export async function init() {
-  try {
-    const payload = await invoke<AppStatus>("get_status");
-    applyRemoteStatus(payload);
-    setLang(status.language === "English" ? "zh" : "en");
-    applyI18n();
-    refreshUI();
-    logUI("init → get_status applied");
-  } catch (e) {
-    console.error("get_status failed:", e);
-  }
-
   logUI(`init — tauri:${isTauri()}`);
 
   if (!isTauri()) {
@@ -37,20 +27,25 @@ export async function init() {
     return;
   }
 
-  // ── Subscribe to push events BEFORE pulling initial state ──
+  // ── Subscribe to push events BEFORE pulling initial state (B3) ──
+  // A status-changed fired between get_status and listen would otherwise be lost.
+  let initialApplied = false;
 
   try {
-    listen("status-changed", (event) => {
+    await listen("status-changed", (event) => {
       const payload = event.payload as AppStatus;
-      const langChanged = applyRemoteStatus(payload);
-      if (langChanged) {
-        setLang(status.language === "English" ? "zh" : "en");
-        applyI18n();
+      // Dedup: the first status-changed may duplicate the get_status payload.
+      if (initialApplied) {
+        const langChanged = applyRemoteStatus(payload);
+        if (langChanged) {
+          setLang(status.language === "English" ? "zh" : "en");
+          applyI18n();
+        }
+        refreshUI();
+        reapplyCalibratingState();
+        handleStatusChanged(payload.calibrating_mode_enabled);
+        logUI("status-changed → refresh");
       }
-      refreshUI();
-      reapplyCalibratingState();
-      handleStatusChanged(payload.calibrating_mode_enabled);
-      logUI("status-changed → refresh");
     });
   } catch (e) {
     console.error("listen status-changed failed", e);
@@ -66,6 +61,19 @@ export async function init() {
     });
   } catch (e) {
     console.error("listen ratio-updated failed", e);
+  }
+
+  // ── Pull initial state (listeners are already armed) ──
+  try {
+    const payload = await invoke<AppStatus>("get_status");
+    applyRemoteStatus(payload);
+    setLang(status.language === "English" ? "zh" : "en");
+    applyI18n();
+    refreshUI();
+    initialApplied = true;
+    logUI("init → get_status applied");
+  } catch (e) {
+    console.error("get_status failed:", e);
   }
 
   // ── User actions → backend invoke ──

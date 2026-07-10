@@ -2,7 +2,7 @@ use mado::WindowBounds;
 use serde::{Deserialize, Serialize};
 
 use crate::touch_core::{
-    definition::ActionDefinition,
+    definition::ActionDef,
     mouse,
     position::{UIPosition, UIRatio},
 };
@@ -25,9 +25,9 @@ impl ActionContext {
         }
     }
 
-    /// Execute all steps in an ActionDefinition.
-    pub fn execute_action(&self, action: &'static dyn ActionDefinition) -> anyhow::Result<()> {
-        for step in action.get_steps() {
+    /// Execute all steps in an action definition.
+    pub fn execute_action(&self, action: &'static ActionDef) -> anyhow::Result<()> {
+        for step in action.steps {
             match step {
                 StepType::ClickCursor => {
                     mouse::left_click(self.cursor_position.0, self.cursor_position.1)?;
@@ -61,7 +61,7 @@ impl ActionContext {
                 }
             }
         }
-        if action.get_restore_cursor() {
+        if action.restore_cursor {
             mouse::move_to(self.cursor_position.0, self.cursor_position.1)?;
         }
         Ok(())

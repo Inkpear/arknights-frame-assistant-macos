@@ -1,5 +1,3 @@
-use std::default;
-
 use mado::WindowBounds;
 use serde::{Deserialize, Serialize};
 
@@ -15,7 +13,7 @@ pub struct UIRatio {
 }
 
 /// Default UI ratios for a 1920x1080 window.
-impl default::Default for UIRatio {
+impl Default for UIRatio {
     fn default() -> Self {
         UIRatio {
             left_pause: (0.92, 0.1),
@@ -29,7 +27,7 @@ impl default::Default for UIRatio {
 
 /// Identifies which UI element a ratio value corresponds to.
 #[derive(Deserialize, Serialize, Debug, Clone)]
-pub enum UIRationType {
+pub enum UIRatioType {
     LeftPause,
     RightPause,
     Skill,

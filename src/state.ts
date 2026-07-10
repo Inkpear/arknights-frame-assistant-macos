@@ -78,14 +78,27 @@ export const keybindOverrides: Map<string, number> = new Map();
 /** Current UI ratio values (synced from backend) */
 export const ratios: RatioValue[] = structuredClone(DEFAULT_RATIOS);
 
-// ── Backend key mapping (snake_case → PascalCase) ──
-const RATIO_BACKEND_KEY: Record<string, string> = {
-  left_pause: "LeftPause",
-  right_pause: "RightPause",
-  skill: "Skill",
-  retreat: "Retreat",
-  speed: "Speed",
-};
+// ── Backend key mapping (PascalCase → snake_case, precomputed for O(n) sync) ──
+const RATIO_FRONT_TO_BACK: Map<string, string> = new Map([
+  ["LeftPause", "left_pause"],
+  ["RightPause", "right_pause"],
+  ["Skill", "skill"],
+  ["Retreat", "retreat"],
+  ["Speed", "speed"],
+]);
+
+// ── Dirty tracking for incremental rendering (P1) ──
+// Bumped whenever keybind/ratio data changes; render.ts compares to detect skips.
+export let keybindsVersion = 0;
+export let ratiosVersion = 0;
+
+function bumpKeybinds() { keybindsVersion++; }
+function bumpRatios() { ratiosVersion++; }
+
+/** Notify that keybind data changed locally (so the next render rebuilds the list). */
+export function notifyKeybindsChanged() { bumpKeybinds(); }
+/** Notify that ratio data changed locally (so the next render rebuilds the grid). */
+export function notifyRatiosChanged() { bumpRatios(); }
 
 /**
  * Apply a full status payload from the backend.
@@ -101,7 +114,16 @@ export function applyRemoteStatus(payload: AppStatus): boolean {
   });
 
   const langChanged = status.language !== payload.language;
+  const profileChanged = status.current_profile !== payload.current_profile;
   Object.assign(status, payload);
+
+  // Language change forces a rebuild of keybind/ratio panels: their labels are
+  // baked into innerHTML via t(...), so applyI18n() (which only touches
+  // [data-i18n]) cannot update them.
+  if (langChanged) {
+    bumpKeybinds();
+    bumpRatios();
+  }
 
   // ── Keybind overrides: pick current-profile map from payload ──
   const keycodes =
@@ -112,41 +134,19 @@ export function applyRemoteStatus(payload: AppStatus): boolean {
   if (keycodes) {
     for (const [id, kc] of Object.entries(keycodes)) keybindOverrides.set(id, kc);
   }
+  if (profileChanged || keycodes) bumpKeybinds();
   logState("keybinds synced", keybindOverrides.size);
 
   // ── UI ratios: backend uses snake_case keys, frontend uses PascalCase ──
   if (payload.ui_ratio) {
     const ur = payload.ui_ratio as Record<string, [number, number]>;
     for (const r of ratios) {
-      const bk = Object.entries(RATIO_BACKEND_KEY).find(([, v]) => v === r.ratioType)?.[0];
+      const bk = RATIO_FRONT_TO_BACK.get(r.ratioType);
       if (bk && ur[bk]) r.ratio = ur[bk];
     }
+    bumpRatios();
     logState("ratios synced", ratios.map((r) => `${r.ratioType}:${r.ratio}`));
   }
 
   return langChanged;
-}
-
-// ── Utility ──
-
-export function displayToast(msg: string, warning = false) {
-  const container = document.querySelector("#toast-container")!;
-  const el = document.createElement("div");
-  el.className = `toast${warning ? " toast--warning" : ""}`;
-  el.textContent = msg;
-  container.appendChild(el);
-  while (container.children.length > 3) container.firstChild?.remove();
-  setTimeout(() => el.remove(), 2500);
-}
-
-/** Shortcut for document.querySelector — throws if element not found. */
-export function $(sel: string): HTMLElement {
-  const el = document.querySelector(sel);
-  if (!el) throw new Error(`Element not found: ${sel}`);
-  return el as HTMLElement;
-}
-
-/** True when running inside a Tauri webview. */
-export function isTauri(): boolean {
-  return "__TAURI_INTERNALS__" in window;
 }

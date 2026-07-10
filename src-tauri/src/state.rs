@@ -5,22 +5,28 @@ use tokio::sync::{RwLock, broadcast};
 
 use crate::{
     config::{AppConfig, AppConfigType, AppLanguage},
-    desktop::tray::TrayMenuItemHandles,
+    desktop::TrayMenuItemHandles,
     ipc::protocol::{AppStatusPayload, UIRatioPayload, WindowInfoPayload},
     touch_core::{
-        definition::{self, ActionDefinition},
-        position::{UIRatio, UIRationType},
+        definition::{self, ActionDef},
+        position::{UIRatio, UIRatioType},
         window::WindowContext,
     },
 };
 
 /// Central application state shared across all services.
+///
+/// Lock invariant: the `config` and `window_ctx` `RwLock`s must never be held
+/// across an `.await`. Holders drop guards before awaiting to avoid blocking
+/// the mado monitor thread (which uses `blocking_read`/`blocking_write`).
 pub struct AppState {
     pub calibrating_mode: AtomicBool,
+    /// Lock-free mirror of `config.hotkey_enabled`, read on the hot KeyUp path.
+    pub hotkey_enabled: AtomicBool,
     pub config: RwLock<AppConfig>,
-    pub keycode_map: RwLock<HashMap<u16, &'static dyn ActionDefinition>>,
+    pub keycode_map: RwLock<HashMap<u16, &'static ActionDef>>,
     pub window_ctx: RwLock<WindowContext>,
-    pub calibrating_target: RwLock<Option<UIRationType>>,
+    pub calibrating_target: RwLock<Option<UIRatioType>>,
     pub shutdown_channel: (broadcast::Sender<()>, broadcast::Receiver<()>),
     pub app_handle: tauri::AppHandle,
 }
@@ -32,8 +38,10 @@ impl AppState {
             config.current_keycode(),
         ));
         let shutdown_channel = broadcast::channel(1);
+        let hotkey_enabled = AtomicBool::new(config.hotkey_enabled);
         Self {
             calibrating_mode: AtomicBool::new(false),
+            hotkey_enabled,
             config: RwLock::new(config),
             keycode_map,
             window_ctx: RwLock::new(WindowContext::default()),
@@ -73,6 +81,8 @@ impl AppState {
             }
             config_guard.hotkey_enabled = enabled;
         }
+        self.hotkey_enabled
+            .store(enabled, std::sync::atomic::Ordering::SeqCst);
 
         self.emit_status_async().await;
         self.save().await?;
@@ -85,7 +95,7 @@ impl AppState {
         self.emit_status_async().await;
     }
 
-    pub async fn set_calibrating_target(&self, target: UIRationType) {
+    pub async fn set_calibrating_target(&self, target: UIRatioType) {
         *self.calibrating_target.write().await = Some(target);
     }
 
@@ -105,6 +115,7 @@ impl AppState {
             updated_map.as_ref(),
         );
         *self.keycode_map.write().await = new_map;
+        self.emit_status_async().await;
         self.save().await?;
         Ok(())
     }
@@ -113,27 +124,27 @@ impl AppState {
         let mut guard = self.config.write().await;
         let ratio = guard.ui_ratio.get_or_insert_with(UIRatio::default);
         match new_ratio.ratio_type {
-            UIRationType::LeftPause => ratio.left_pause = new_ratio.ratio,
-            UIRationType::RightPause => ratio.right_pause = new_ratio.ratio,
-            UIRationType::Skill => ratio.skill = new_ratio.ratio,
-            UIRationType::Retreat => ratio.retreat = new_ratio.ratio,
-            UIRationType::Speed => ratio.speed = new_ratio.ratio,
+            UIRatioType::LeftPause => ratio.left_pause = new_ratio.ratio,
+            UIRatioType::RightPause => ratio.right_pause = new_ratio.ratio,
+            UIRatioType::Skill => ratio.skill = new_ratio.ratio,
+            UIRatioType::Retreat => ratio.retreat = new_ratio.ratio,
+            UIRatioType::Speed => ratio.speed = new_ratio.ratio,
         }
         drop(guard);
         self.switch_calibrating_mode_enabled(false).await;
         self.save().await
     }
 
-    pub async fn reset_ui_ratio(&self, ratio_type: &UIRationType) -> anyhow::Result<()> {
+    pub async fn reset_ui_ratio(&self, ratio_type: &UIRatioType) -> anyhow::Result<()> {
         let default_ratio = UIRatio::default();
         let mut guard = self.config.write().await;
         let ratio = guard.ui_ratio.get_or_insert_with(UIRatio::default);
         match ratio_type {
-            UIRationType::LeftPause => ratio.left_pause = default_ratio.left_pause,
-            UIRationType::RightPause => ratio.right_pause = default_ratio.right_pause,
-            UIRationType::Skill => ratio.skill = default_ratio.skill,
-            UIRationType::Retreat => ratio.retreat = default_ratio.retreat,
-            UIRationType::Speed => ratio.speed = default_ratio.speed,
+            UIRatioType::LeftPause => ratio.left_pause = default_ratio.left_pause,
+            UIRatioType::RightPause => ratio.right_pause = default_ratio.right_pause,
+            UIRatioType::Skill => ratio.skill = default_ratio.skill,
+            UIRatioType::Retreat => ratio.retreat = default_ratio.retreat,
+            UIRatioType::Speed => ratio.speed = default_ratio.speed,
         }
         drop(guard);
         self.emit_status_async().await;
@@ -170,8 +181,21 @@ impl AppState {
         Ok(())
     }
 
+    pub async fn toggle_window(&self) {
+        if let Some(window) = self.app_handle.get_webview_window("main") {
+            if window.is_visible().unwrap_or(false) {
+                window.hide().ok();
+            } else {
+                window.show().ok();
+                window.set_focus().ok();
+            }
+        }
+        self.emit_status_async().await;
+    }
+
     pub fn is_hotkey_enabled(&self) -> bool {
-        tokio::task::block_in_place(|| self.config.blocking_read()).hotkey_enabled
+        self.hotkey_enabled
+            .load(std::sync::atomic::Ordering::SeqCst)
     }
 
     pub fn is_calibrating_mode_enabled(&self) -> bool {
@@ -179,10 +203,7 @@ impl AppState {
             .load(std::sync::atomic::Ordering::SeqCst)
     }
 
-    pub async fn get_action_for_keycode(
-        &self,
-        keycode: u16,
-    ) -> Option<&'static dyn ActionDefinition> {
+    pub async fn get_action_for_keycode(&self, keycode: u16) -> Option<&'static ActionDef> {
         self.keycode_map.read().await.get(&keycode).copied()
     }
 
@@ -215,6 +236,15 @@ impl AppState {
     pub async fn get_status_payload(&self) -> AppStatusPayload {
         let config = self.config.read().await.clone();
         let window_ctx = self.window_ctx.read().await.clone();
+        self.build_status_payload(config, window_ctx)
+    }
+
+    /// Build a status payload from a config + window snapshot.
+    fn build_status_payload(
+        &self,
+        config: AppConfig,
+        window_ctx: WindowContext,
+    ) -> AppStatusPayload {
         let hotkey_enabled = config.hotkey_enabled;
         let is_english = config.language == AppLanguage::English;
         let window_available = window_ctx.is_available();
@@ -242,38 +272,31 @@ impl AppState {
     }
 
     fn emit_status_data(&self, config: AppConfig, window_ctx: WindowContext) {
-        let hotkey_enabled = config.hotkey_enabled;
         let is_english = config.language == AppLanguage::English;
-        let language_label = if is_english { "中文" } else { "English" };
+        let hotkey_enabled = config.hotkey_enabled;
         let is_window_visible = self.is_window_visible();
         let window_available = window_ctx.is_available();
+        let payload = self.build_status_payload(config, window_ctx);
 
-        let tray_menu_handles = self.app_handle.state::<TrayMenuItemHandles>();
-        tray_menu_handles
-            .update_tray_status(is_english, hotkey_enabled, window_available, is_window_visible)
-            .expect("Failed to update tray menu labels, Must register TrayMenuItemHandles in app state before calling emit_status()");
-
-        if let Err(e) = self.app_handle.emit(
-            "status-changed",
-            AppStatusPayload {
+        // Tray/menu + emit must run on the main thread (called from the mado
+        // monitor thread or a tokio worker). Schedule a single main-thread job.
+        let outer = self.app_handle.clone();
+        let inner = outer.clone();
+        if let Err(e) = outer.run_on_main_thread(move || {
+            let tray = inner.state::<TrayMenuItemHandles>();
+            if let Err(e) = tray.update_tray_status(
+                is_english,
                 hotkey_enabled,
-                calibrating_mode_enabled: self.is_calibrating_mode_enabled(),
-                current_profile: config.current_profile,
-                hotkey_active: hotkey_enabled && window_available,
-                language: language_label.to_string(),
-                regular_operations_keycode: config.regular_operations_keycode,
-                garrison_protocol_keycode: config.garrison_protocol_keycode,
-                ui_ratio: config.ui_ratio.clone(),
-                window: WindowInfoPayload {
-                    app_name: window_ctx.app_name,
-                    window_title: window_ctx.window_title,
-                    bounds: window_ctx.window_bounds,
-                    is_arknights: window_ctx.is_arknights,
-                    is_available: window_available,
-                },
-            },
-        ) {
-            log::error!("Failed to emit status-changed event: {e}");
+                window_available,
+                is_window_visible,
+            ) {
+                log::error!("Failed to update tray: {e}");
+            }
+            if let Err(e) = inner.emit("status-changed", payload) {
+                log::error!("Failed to emit status-changed event: {e}");
+            }
+        }) {
+            log::error!("Failed to schedule main-thread status emit: {e}");
         }
     }
 

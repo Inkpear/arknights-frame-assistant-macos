@@ -34,7 +34,7 @@ pub struct AppStatusPayload {
 #[derive(Deserialize, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct UIRatioPayload {
-    pub ratio_type: crate::touch_core::position::UIRationType,
+    pub ratio_type: crate::touch_core::position::UIRatioType,
     pub ratio: (f64, f64),
 }
 

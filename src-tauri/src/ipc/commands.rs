@@ -4,7 +4,7 @@ use crate::{
     config::AppConfigType,
     ipc::protocol::{AppStatusPayload, CustomKeycodePayload},
     state::AppState,
-    touch_core::position::UIRationType,
+    touch_core::position::UIRatioType,
 };
 
 /// Get the full current application status (for initial frontend sync).
@@ -39,7 +39,7 @@ pub async fn set_calibrating_mode_enabled(
 #[tauri::command]
 pub async fn set_calibrating_target(
     app_state: State<'_, AppState>,
-    target: UIRationType,
+    target: UIRatioType,
 ) -> Result<(), String> {
     app_state.set_calibrating_target(target).await;
     Ok(())
@@ -83,7 +83,7 @@ pub fn shutdown(app_state: State<'_, AppState>) -> Result<usize, String> {
 #[tauri::command]
 pub async fn reset_ui_ratio(
     app_state: State<'_, AppState>,
-    ratio_type: UIRationType,
+    ratio_type: UIRatioType,
 ) -> Result<(), String> {
     app_state
         .reset_ui_ratio(&ratio_type)
