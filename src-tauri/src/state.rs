@@ -1,6 +1,6 @@
 use std::{collections::HashMap, sync::atomic::AtomicBool};
 
-use tauri::{Emitter, Manager};
+use tauri::{Emitter, Manager, WebviewWindowBuilder, WebviewUrl};
 use tokio::sync::{RwLock, broadcast};
 
 use crate::{
@@ -181,13 +181,36 @@ impl AppState {
         Ok(())
     }
 
+    /// Toggle the settings window. On first open, creates the WebView
+    /// (lazy init); on close, destroys it to free memory (~22 MB).
     pub async fn toggle_window(&self) {
         if let Some(window) = self.app_handle.get_webview_window("main") {
             if window.is_visible().unwrap_or(false) {
-                window.hide().ok();
+                window.close().ok();
             } else {
                 window.show().ok();
                 window.set_focus().ok();
+            }
+        } else {
+            // First open: create the window (WebView + frontend).
+            match WebviewWindowBuilder::new(
+                &self.app_handle,
+                "main",
+                WebviewUrl::App("index.html".into()),
+            )
+            .title("AFA")
+            .inner_size(720.0, 560.0)
+            .min_inner_size(580.0, 420.0)
+            .transparent(true)
+            .title_bar_style(tauri::TitleBarStyle::Overlay)
+            .hidden_title(true)
+            .traffic_light_position(tauri::LogicalPosition::new(16.0, 18.0))
+            .build()
+            {
+                Ok(_) => {}
+                Err(e) => {
+                    log::error!("Failed to create main window: {e}");
+                }
             }
         }
         self.emit_status_async().await;

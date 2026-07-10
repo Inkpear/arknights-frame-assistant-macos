@@ -12,27 +12,7 @@
   "app": {
     "macOSPrivateApi": true,
     "withGlobalTauri": true,
-    "windows": [
-      {
-        "title": "AFA",
-        "width": 720,
-        "height": 560,
-        "minWidth": 580,
-        "minHeight": 420,
-        "transparent": true,
-        "titleBarStyle": "Overlay",
-        "hiddenTitle": true,
-        "trafficLightPosition": {
-          "x": 16,
-          "y": 18
-        },
-        "windowEffects": {
-          "effects": ["hudWindow"],
-          "radius": 14,
-          "state": "active"
-        }
-      }
-    ],
+    "windows": [],
     "security": {
       "csp": "default-src 'self'"
     }
