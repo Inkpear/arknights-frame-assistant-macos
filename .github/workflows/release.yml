@@ -37,11 +37,8 @@ jobs:
       - name: Install frontend dependencies
         run: bun install
 
-      - name: Install Tauri CLI
-        run: cargo install tauri-cli --version "^2"
-
       - name: Build release
-        run: cargo tauri build
+        run: bun tauri build
         working-directory: src-tauri
 
       - name: Find DMG
