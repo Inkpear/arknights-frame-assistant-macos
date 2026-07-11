@@ -215,7 +215,9 @@ impl AppState {
             )
             .build()
             {
-                Ok(_) => {}
+                Ok(window) => {
+                    window.set_focus().ok();
+                }
                 Err(e) => {
                     log::error!("Failed to create main window: {e}");
                 }

@@ -62,6 +62,7 @@ impl ActionContext {
             }
         }
         if action.restore_cursor {
+            std::thread::sleep(std::time::Duration::from_millis(15));
             mouse::move_to(self.cursor_position.0, self.cursor_position.1)?;
         }
         Ok(())

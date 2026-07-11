@@ -37,6 +37,8 @@ pub fn run() {
             }
         })
         .setup(move |app| {
+            app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+
             let handle = app.handle().clone();
 
             let config_dir = app

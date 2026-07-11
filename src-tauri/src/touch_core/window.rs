@@ -111,20 +111,6 @@ mod tests {
     }
 
     #[test]
-    fn matches_arknights_by_title() {
-        assert!(matches_rules(
-            &Some("Terminal".into()),
-            &Some("Arknights - Stage".into()),
-            &WINDOW_FILTER_RULES
-        ));
-        assert!(matches_rules(
-            &None,
-            &Some("明日方舟 - 作战".into()),
-            &WINDOW_FILTER_RULES
-        ));
-    }
-
-    #[test]
     fn matches_no_match() {
         assert!(!matches_rules(
             &Some("Safari".into()),

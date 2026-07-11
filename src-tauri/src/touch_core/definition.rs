@@ -59,7 +59,7 @@ static ACTIONS: &[ActionDefEntry] = &[
             action_id: "advance_33ms",
             steps: &[
                 StepType::ClickLeftPause,
-                StepType::WaitMillis(33.0),
+                StepType::WaitMillis(31.0),
                 StepType::ClickRightPause,
             ],
             default_keycode: Keycode::T,
@@ -72,7 +72,7 @@ static ACTIONS: &[ActionDefEntry] = &[
             action_id: "advance_166ms",
             steps: &[
                 StepType::ClickLeftPause,
-                StepType::WaitMillis(166.0),
+                StepType::WaitMillis(164.0),
                 StepType::ClickRightPause,
             ],
             default_keycode: Keycode::Y,
