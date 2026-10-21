@@ -27,7 +27,27 @@ pub struct AppStatusPayload {
     pub regular_operations_keycode: Option<HashMap<String, u16>>,
     pub garrison_protocol_keycode: Option<HashMap<String, u16>>,
     pub ui_ratio: Option<UIRatio>,
+    pub vision: VisionStatusPayload,
     pub window: WindowInfoPayload,
+}
+
+/// State of the white-diamond visual recognition.
+#[derive(Serialize, Clone)]
+pub struct VisionStatusPayload {
+    pub enabled: bool,
+    pub permission: bool,
+    pub dry_run: bool,
+    pub debug_capture: bool,
+    pub last_ok: Option<bool>,
+    /// `"vision"`, `"dry_run"` or `"fallback"`.
+    pub last_mode: Option<String>,
+    /// Stable reason code: permission_denied, window_not_found,
+    /// capture_failed, no_diamond, low_confidence, button_out_of_bounds.
+    pub last_reason: Option<String>,
+    pub last_latency_ms: Option<u64>,
+    pub last_capture_ms: Option<u64>,
+    pub last_confidence: Option<f64>,
+    pub last_debug_path: Option<String>,
 }
 
 /// A single UI ratio element update from the frontend.

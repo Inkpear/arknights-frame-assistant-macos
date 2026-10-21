@@ -9,6 +9,34 @@ import { logState } from "./debug";
 
 // ── Types matching backend AppStatusPayload ──
 
+export interface VisionStatus {
+  enabled: boolean;
+  permission: boolean;
+  dry_run: boolean;
+  debug_capture: boolean;
+  last_ok: boolean | null;
+  last_mode: string | null;
+  last_reason: string | null;
+  last_latency_ms: number | null;
+  last_capture_ms: number | null;
+  last_confidence: number | null;
+  last_debug_path: string | null;
+}
+
+export const DEFAULT_VISION: VisionStatus = {
+  enabled: false,
+  permission: false,
+  dry_run: false,
+  debug_capture: false,
+  last_ok: null,
+  last_mode: null,
+  last_reason: null,
+  last_latency_ms: null,
+  last_capture_ms: null,
+  last_confidence: null,
+  last_debug_path: null,
+};
+
 export interface AppStatus {
   hotkey_enabled: boolean;
   hotkey_active: boolean;
@@ -18,6 +46,7 @@ export interface AppStatus {
   ui_ratio: Record<string, [number, number]> | null;
   regular_operations_keycode?: Record<string, number>;
   garrison_protocol_keycode?: Record<string, number>;
+  vision: VisionStatus;
   window: {
     app_name: string | null;
     window_title: string | null;
@@ -69,6 +98,7 @@ export const status: AppStatus = {
   current_profile: "RegularOperations",
   language: "中文",
   ui_ratio: null,
+  vision: structuredClone(DEFAULT_VISION),
   window: { app_name: null, window_title: null, bounds: null, is_arknights: false, is_available: false },
 };
 
@@ -106,16 +136,21 @@ export function notifyRatiosChanged() { bumpRatios(); }
  * Returns true if the language changed (caller must re-apply i18n).
  */
 export function applyRemoteStatus(payload: AppStatus): boolean {
+  // Be tolerant of an older/mismatched backend payload: never let a missing
+  // vision snapshot throw before the rest of the status is applied.
+  const vision = payload.vision ?? status.vision ?? structuredClone(DEFAULT_VISION);
   logState("status-changed received", {
     hotkey: payload.hotkey_enabled,
     profile: payload.current_profile,
     lang: payload.language,
     window: payload.window.is_available,
+    vision: `${vision.enabled ? "on" : "off"}:${vision.last_ok ?? "-"}`,
   });
 
   const langChanged = status.language !== payload.language;
   const profileChanged = status.current_profile !== payload.current_profile;
   Object.assign(status, payload);
+  status.vision = vision;
 
   // Language change forces a rebuild of keybind/ratio panels: their labels are
   // baked into innerHTML via t(...), so applyI18n() (which only touches
