@@ -1,19 +1,47 @@
-use std::{collections::HashMap, sync::atomic::AtomicBool};
+use std::{
+    collections::HashMap,
+    path::PathBuf,
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
+};
 
-use tauri::{Emitter, Manager, WebviewWindowBuilder, WebviewUrl};
 use tauri::window::{Effect, EffectState, EffectsBuilder};
+use tauri::{Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 use tokio::sync::{RwLock, broadcast};
 
 use crate::{
     config::{AppConfig, AppConfigType, AppLanguage},
     desktop::TrayMenuItemHandles,
-    ipc::protocol::{AppStatusPayload, UIRatioPayload, WindowInfoPayload},
+    ipc::protocol::{AppStatusPayload, UIRatioPayload, VisionStatusPayload, WindowInfoPayload},
     touch_core::{
         definition::{self, ActionDef},
         position::{UIRatio, UIRatioType},
+        vision::{VisionConfig, VisionRuntimeStatus},
         window::WindowContext,
     },
 };
+
+fn build_vision_status(
+    config: &AppConfig,
+    permission: bool,
+    runtime: &VisionRuntimeStatus,
+) -> VisionStatusPayload {
+    VisionStatusPayload {
+        enabled: config.vision.enabled,
+        permission,
+        dry_run: config.vision.dry_run,
+        debug_capture: config.vision.debug_capture,
+        last_ok: runtime.last_ok,
+        last_mode: runtime.last_mode.clone(),
+        last_reason: runtime.last_reason.clone(),
+        last_latency_ms: runtime.last_latency_ms,
+        last_capture_ms: runtime.last_capture_ms,
+        last_confidence: runtime.last_confidence,
+        last_debug_path: runtime.last_debug_path.clone(),
+    }
+}
 
 /// Central application state shared across all services.
 ///
@@ -24,6 +52,11 @@ pub struct AppState {
     pub calibrating_mode: AtomicBool,
     /// Lock-free mirror of `config.hotkey_enabled`, read on the hot KeyUp path.
     pub hotkey_enabled: AtomicBool,
+    /// Screen-recording permission, queried without prompting at startup.
+    pub vision_permission: AtomicBool,
+    /// Last visual-recognition result, written on the hotkey action path.
+    pub vision_status: Arc<Mutex<VisionRuntimeStatus>>,
+    pub vision_debug_dir: PathBuf,
     pub config: RwLock<AppConfig>,
     pub keycode_map: RwLock<HashMap<u16, &'static ActionDef>>,
     pub window_ctx: RwLock<WindowContext>,
@@ -40,9 +73,16 @@ impl AppState {
         ));
         let shutdown_channel = broadcast::channel(1);
         let hotkey_enabled = AtomicBool::new(config.hotkey_enabled);
+        let vision_permission =
+            AtomicBool::new(crate::touch_core::vision::permission::has_screen_capture_permission());
+        let vision_status = Arc::new(Mutex::new(VisionRuntimeStatus::default()));
+        let vision_debug_dir = config.config_dir.join("vision-debug");
         Self {
             calibrating_mode: AtomicBool::new(false),
             hotkey_enabled,
+            vision_permission,
+            vision_status,
+            vision_debug_dir,
             config: RwLock::new(config),
             keycode_map,
             window_ctx: RwLock::new(WindowContext::default()),
@@ -158,7 +198,10 @@ impl AppState {
             guard.regular_operations_keycode = None;
             guard.garrison_protocol_keycode = None;
             guard.ui_ratio = None;
+            guard.vision = VisionConfig::default();
         }
+        *self.calibrating_target.write().await = None;
+        self.switch_calibrating_mode_enabled(false).await;
         let profile = {
             let guard = self.config.read().await;
             guard.current_profile.clone()
@@ -236,6 +279,73 @@ impl AppState {
             .load(std::sync::atomic::Ordering::SeqCst)
     }
 
+    pub fn vision_permission_granted(&self) -> bool {
+        self.vision_permission.load(Ordering::SeqCst)
+    }
+
+    pub fn set_vision_permission(&self, granted: bool) {
+        self.vision_permission.store(granted, Ordering::SeqCst);
+    }
+
+    pub fn vision_status_snapshot(&self) -> VisionRuntimeStatus {
+        self.vision_status
+            .lock()
+            .map(|status| status.clone())
+            .unwrap_or_default()
+    }
+
+    pub fn vision_debug_dir(&self) -> PathBuf {
+        self.vision_debug_dir.clone()
+    }
+
+    pub async fn set_vision_enabled(&self, enabled: bool) -> anyhow::Result<()> {
+        {
+            let mut config = self.config.write().await;
+            config.vision.enabled = enabled;
+        }
+        if enabled && !self.vision_permission_granted() {
+            log::warn!("Vision enabled but screen-recording permission is not granted");
+        }
+        log::info!("Vision enabled: {enabled}");
+        self.save().await?;
+        self.emit_status_async().await;
+        Ok(())
+    }
+
+    pub async fn set_vision_dry_run(&self, enabled: bool) -> anyhow::Result<()> {
+        {
+            let mut config = self.config.write().await;
+            config.vision.dry_run = enabled;
+        }
+        log::info!("Vision dry-run: {enabled}");
+        self.save().await?;
+        self.emit_status_async().await;
+        Ok(())
+    }
+
+    pub async fn set_vision_debug(&self, enabled: bool) -> anyhow::Result<()> {
+        {
+            let mut config = self.config.write().await;
+            config.vision.debug_capture = enabled;
+        }
+        log::info!("Vision debug capture: {enabled}");
+        self.save().await?;
+        self.emit_status_async().await;
+        Ok(())
+    }
+
+    pub async fn request_screen_capture_permission(&self) -> bool {
+        let granted = tokio::task::spawn_blocking(
+            crate::touch_core::vision::permission::request_screen_capture_permission,
+        )
+        .await
+        .unwrap_or(false);
+        self.set_vision_permission(granted);
+        log::info!("Screen-recording permission request returned: {granted}");
+        self.emit_status_async().await;
+        granted
+    }
+
     pub async fn get_action_for_keycode(&self, keycode: u16) -> Option<&'static ActionDef> {
         self.keycode_map.read().await.get(&keycode).copied()
     }
@@ -281,6 +391,11 @@ impl AppState {
         let hotkey_enabled = config.hotkey_enabled;
         let is_english = config.language == AppLanguage::English;
         let window_available = window_ctx.is_available();
+        let vision = build_vision_status(
+            &config,
+            self.vision_permission_granted(),
+            &self.vision_status_snapshot(),
+        );
         AppStatusPayload {
             hotkey_enabled,
             calibrating_mode_enabled: self.is_calibrating_mode_enabled(),
@@ -294,6 +409,7 @@ impl AppState {
             regular_operations_keycode: config.regular_operations_keycode,
             garrison_protocol_keycode: config.garrison_protocol_keycode,
             ui_ratio: config.ui_ratio,
+            vision,
             window: WindowInfoPayload {
                 app_name: window_ctx.app_name,
                 window_title: window_ctx.window_title,

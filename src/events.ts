@@ -17,7 +17,12 @@ import { status, ratios, applyRemoteStatus, AppStatus } from "./state";
 import { refreshUI, updateRatioInputs } from "./render";
 import { initKeybindModule } from "./keybind";
 import { initRatioModule } from "./ratio";
-import { initCalibrateModule, reapplyCalibratingState, handleStatusChanged } from "./calibrate";
+import {
+  initCalibrateModule,
+  reapplyCalibratingState,
+  handleStatusChanged,
+} from "./calibrate";
+import { initVisionModule } from "./vision";
 
 export async function init() {
   logUI(`init — tauri:${isTauri()}`);
@@ -33,9 +38,10 @@ export async function init() {
 
   try {
     await listen("status-changed", (event) => {
-      const payload = event.payload as AppStatus;
-      // Dedup: the first status-changed may duplicate the get_status payload.
-      if (initialApplied) {
+      try {
+        const payload = event.payload as AppStatus;
+        // Dedup: the first status-changed may duplicate the get_status payload.
+        if (!initialApplied) return;
         const langChanged = applyRemoteStatus(payload);
         if (langChanged) {
           setLang(status.language === "English" ? "zh" : "en");
@@ -45,6 +51,8 @@ export async function init() {
         reapplyCalibratingState();
         handleStatusChanged(payload.calibrating_mode_enabled);
         logUI("status-changed → refresh");
+      } catch (e) {
+        console.error("status-changed handler failed", e);
       }
     });
   } catch (e) {
@@ -69,8 +77,14 @@ export async function init() {
     applyRemoteStatus(payload);
     setLang(status.language === "English" ? "zh" : "en");
     applyI18n();
-    refreshUI();
+    // Mark initialized before rendering: a rendering error must not permanently
+    // disable every subsequent status-changed event (language/window tracking).
     initialApplied = true;
+    try {
+      refreshUI();
+    } catch (e) {
+      console.error("initial refreshUI failed", e);
+    }
     logUI("init → get_status applied");
   } catch (e) {
     console.error("get_status failed:", e);
@@ -136,4 +150,5 @@ export async function init() {
   initKeybindModule();
   initRatioModule();
   initCalibrateModule();
+  initVisionModule();
 }

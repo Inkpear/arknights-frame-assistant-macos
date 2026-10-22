@@ -70,6 +70,42 @@ pub fn compute_position(ratio_x: f64, ratio_y: f64, window: &WindowBounds) -> (f
     (x, y)
 }
 
+/// Candidate game content aspect ratios (width / height).
+const CONTENT_ASPECTS: [f64; 4] = [16.0 / 9.0, 16.0 / 10.0, 4.0 / 3.0, 3.0 / 2.0];
+
+/// Derive the game content rect by removing the window title bar.
+///
+/// `mado` reports the whole window frame, including the title bar. The game
+/// renders at a standard aspect ratio, so the title bar height can be
+/// recovered by solving `width / (height - title_bar) = aspect`. The candidate
+/// whose implied title bar is plausible and closest to a typical macOS title
+/// bar wins.
+pub fn content_bounds(frame: &WindowBounds) -> WindowBounds {
+    if frame.width <= 0.0 || frame.height <= 0.0 {
+        return frame.clone();
+    }
+    let mut best: Option<(f64, f64)> = None; // (title_bar_height, score)
+    for aspect in CONTENT_ASPECTS {
+        let title_bar = frame.height - frame.width / aspect;
+        if (0.0..=120.0).contains(&title_bar) {
+            let score = (title_bar - 32.0).abs();
+            if best
+                .map(|(_, best_score)| score < best_score)
+                .unwrap_or(true)
+            {
+                best = Some((title_bar, score));
+            }
+        }
+    }
+    let title_bar = best.map(|(height, _)| height).unwrap_or(0.0);
+    WindowBounds {
+        x: frame.x,
+        y: frame.y + title_bar,
+        width: frame.width,
+        height: frame.height - title_bar,
+    }
+}
+
 /// Check whether a point `(x, y)` falls inside the given window bounds.
 pub fn check_in_window(x: f64, y: f64, window: &WindowBounds) -> bool {
     x >= window.x && x <= window.x + window.width && y >= window.y && y <= window.y + window.height
@@ -115,5 +151,60 @@ mod tests {
         assert!(!check_in_window(99.0, 200.0, &w));
         assert!(!check_in_window(100.0, 199.0, &w));
         assert!(!check_in_window(901.0, 800.0, &w));
+    }
+
+    #[test]
+    fn content_bounds_strips_16_9_title_bar() {
+        let frame = WindowBounds {
+            x: 100.0,
+            y: 200.0,
+            width: 1283.0,
+            height: 758.0,
+        };
+        let content = content_bounds(&frame);
+        assert!((content.x - 100.0).abs() < 1e-9);
+        assert!((content.y - 236.3).abs() < 0.1);
+        assert!((content.width - 1283.0).abs() < 1e-9);
+        assert!((content.height - 721.7).abs() < 0.1);
+        assert!((content.width / content.height - 16.0 / 9.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn content_bounds_keeps_fullscreen_16_9() {
+        let frame = WindowBounds {
+            x: 0.0,
+            y: 0.0,
+            width: 1920.0,
+            height: 1080.0,
+        };
+        let content = content_bounds(&frame);
+        assert!((content.y - 0.0).abs() < 1e-9);
+        assert!((content.height - 1080.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn content_bounds_handles_16_10() {
+        let frame = WindowBounds {
+            x: 0.0,
+            y: 0.0,
+            width: 1920.0,
+            height: 1230.0,
+        };
+        let content = content_bounds(&frame);
+        assert!((content.y - 30.0).abs() < 1e-9);
+        assert!((content.height - 1200.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn content_bounds_handles_4_3() {
+        let frame = WindowBounds {
+            x: 0.0,
+            y: 0.0,
+            width: 2048.0,
+            height: 1570.0,
+        };
+        let content = content_bounds(&frame);
+        assert!((content.y - 34.0).abs() < 1e-9);
+        assert!((content.height - 1536.0).abs() < 1e-9);
     }
 }

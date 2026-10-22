@@ -36,6 +36,43 @@
           <h2 class="panel-title" data-i18n="section.calibration">UI 校准</h2>
           <div class="ratio-grid" id="ratio-grid"></div>
         </section>
+
+        <section class="glass-panel settings-panel vision-panel" id="vision-card">
+          <h2 class="panel-title" data-i18n="section.vision">白菱形识别（兼容模式）</h2>
+          <p class="settings-hint" data-i18n="vision.hint">
+            仅对快速技能/快速撤退生效：启用后会保持游戏窗口的捕获流（仅该窗口）。按快捷键后等待约 150ms 让选中干员的镜头动画结束，再取一帧识别并点击；未识别到菱形时不点击（不回退）。关闭开关时使用 UI 比例校准。首次使用需要授予屏幕录制权限；60 秒无操作后停止捕获。执行快速操作时设置窗口会自动隐藏，避免挡住游戏点击。
+          </p>
+          <div class="vision-row">
+            <span data-i18n="vision.permissionLabel">屏幕录制权限</span>
+            <span class="vision-permission" id="vision-permission">—</span>
+            <button class="btn btn--sm no-drag" id="vision-request-permission" data-i18n="vision.requestPermission">请求权限</button>
+          </div>
+          <div class="vision-row">
+            <span data-i18n="vision.lastResultLabel">最近识别</span>
+            <span class="vision-result" id="vision-last-result">—</span>
+          </div>
+          <div class="vision-toggles">
+            <label class="toggle no-drag">
+              <input type="checkbox" id="vision-enabled" />
+              <span class="toggle__slider"></span>
+              <span class="toggle__label" data-i18n="vision.enabled">兼容模式（白菱形识别）</span>
+            </label>
+            <label class="toggle no-drag">
+              <input type="checkbox" id="vision-dry-run" />
+              <span class="toggle__slider"></span>
+              <span class="toggle__label" data-i18n="vision.dryRun">只识别不点击（试运行）</span>
+            </label>
+            <label class="toggle no-drag">
+              <input type="checkbox" id="vision-debug" />
+              <span class="toggle__slider"></span>
+              <span class="toggle__label" data-i18n="vision.debug">保存调试截图</span>
+            </label>
+          </div>
+          <p class="vision-note" data-i18n="vision.permissionHint">
+            授权后通常需要重启 App 才能生效。
+          </p>
+          <div class="settings-error" id="vision-error"></div>
+        </section>
       </div>
 
       <div class="tab-panel" id="panel-regular">

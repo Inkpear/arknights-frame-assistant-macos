@@ -91,8 +91,49 @@ pub async fn reset_ui_ratio(
         .map_err(|e| e.to_string())
 }
 
-/// Reset all config (keybinds + UI ratios) to defaults.
+/// Reset all config (keybinds + UI ratios + vision) to defaults.
 #[tauri::command]
 pub async fn reset_config(app_state: State<'_, AppState>) -> Result<(), String> {
     app_state.reset_config().await.map_err(|e| e.to_string())
+}
+
+/// Enable or disable white-diamond recognition for quick skill/retreat.
+#[tauri::command]
+pub async fn set_vision_enabled(
+    app_state: State<'_, AppState>,
+    enabled: bool,
+) -> Result<(), String> {
+    app_state
+        .set_vision_enabled(enabled)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Enable or disable vision dry-run (detect but do not click).
+#[tauri::command]
+pub async fn set_vision_dry_run(
+    app_state: State<'_, AppState>,
+    enabled: bool,
+) -> Result<(), String> {
+    app_state
+        .set_vision_dry_run(enabled)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Enable or disable saving vision debug frames.
+#[tauri::command]
+pub async fn set_vision_debug(app_state: State<'_, AppState>, enabled: bool) -> Result<(), String> {
+    app_state
+        .set_vision_debug(enabled)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Request screen-recording permission (may show the macOS prompt).
+#[tauri::command]
+pub async fn request_screen_capture_permission(
+    app_state: State<'_, AppState>,
+) -> Result<bool, String> {
+    Ok(app_state.request_screen_capture_permission().await)
 }

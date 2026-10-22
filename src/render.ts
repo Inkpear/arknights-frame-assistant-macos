@@ -8,7 +8,15 @@
 import { logUI } from "./debug";
 import { t } from "./i18n";
 import { $ } from "./dom";
-import { KEYBIND_DEFS, keybindOverrides, ratios, status, keybindsVersion, ratiosVersion } from "./state";
+import {
+  DEFAULT_VISION,
+  KEYBIND_DEFS,
+  keybindOverrides,
+  ratios,
+  status,
+  keybindsVersion,
+  ratiosVersion,
+} from "./state";
 import { keyLabel } from "./keybind";
 
 // Last-rendered versions; when unchanged, the rebuild is skipped (P1).
@@ -21,6 +29,7 @@ export function refreshUI() {
   renderHeader();
   renderKeybinds();
   renderRatios();
+  updateVisionStatus();
   renderTabs();
   logUI("refresh complete");
 }
@@ -107,6 +116,70 @@ export function updateRatioInputs() {
     const yInp = document.querySelector<HTMLInputElement>(`.ratio-item__input[data-ratio="${r.ratioType}"][data-axis="1"]`);
     if (xInp) xInp.value = r.ratio[0].toFixed(3);
     if (yInp) yInp.value = r.ratio[1].toFixed(3);
+  }
+}
+
+/** Null-safe status text update. */
+function setStatusText(selector: string, text: string) {
+  const el = document.querySelector<HTMLElement>(selector);
+  if (el) el.textContent = text;
+}
+
+/** White-diamond recognition: update the static card in place. */
+export function updateVisionStatus() {
+  const v = status.vision ?? DEFAULT_VISION;
+  const permission = document.querySelector<HTMLElement>("#vision-permission");
+  if (permission) {
+    permission.textContent = v.permission ? t("vision.permissionGranted") : t("vision.permissionDenied");
+    permission.classList.toggle("vision-permission--ok", v.permission);
+    permission.classList.toggle("vision-permission--denied", !v.permission);
+  }
+  const request = document.querySelector<HTMLButtonElement>("#vision-request-permission");
+  if (request) request.disabled = v.permission;
+
+  const enabled = document.querySelector<HTMLInputElement>("#vision-enabled");
+  if (enabled) enabled.checked = v.enabled;
+  const dryRun = document.querySelector<HTMLInputElement>("#vision-dry-run");
+  if (dryRun) dryRun.checked = v.dry_run;
+  const debug = document.querySelector<HTMLInputElement>("#vision-debug");
+  if (debug) debug.checked = v.debug_capture;
+
+  let result = "—";
+  if (v.last_ok === true) {
+    result = t(
+      "vision.lastOk",
+      String(v.last_latency_ms ?? 0),
+      (v.last_confidence ?? 0).toFixed(2)
+    );
+  } else if (v.last_ok === false) {
+    result = t("vision.lastFail", localizeVisionReason(v.last_reason));
+  }
+  if (v.dry_run && v.last_ok != null) {
+    result = `${t("vision.dryRunPrefix")} ${result}`;
+  }
+  setStatusText("#vision-last-result", result);
+
+  const error = document.querySelector<HTMLElement>("#vision-error");
+  if (error) {
+    error.textContent = v.enabled && !v.permission ? t("vision.needPermission") : "";
+  }
+}
+
+function localizeVisionReason(raw: string | null): string {
+  switch (raw) {
+    case "permission_denied":
+      return t("vision.errPermission");
+    case "window_not_found":
+      return t("vision.errWindow");
+    case "capture_failed":
+      return t("vision.errCapture");
+    case "low_confidence":
+      return t("vision.errLowConfidence");
+    case "button_out_of_bounds":
+      return t("vision.errBounds");
+    case "no_diamond":
+    default:
+      return t("vision.errNoDiamond");
   }
 }
 

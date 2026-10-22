@@ -3,6 +3,7 @@ use std::{collections::HashMap, path::PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::touch_core::position::UIRatio;
+use crate::touch_core::vision::VisionConfig;
 
 const CONFIG_FILENAME: &str = "config.json";
 const CONFIG_SUBDIR: &str = "configurations";
@@ -15,6 +16,8 @@ pub struct AppConfig {
     pub language: AppLanguage,
     pub current_profile: AppConfigType,
     pub ui_ratio: Option<UIRatio>,
+    /// White-diamond visual recognition for quick skill/retreat.
+    pub vision: VisionConfig,
     pub regular_operations_keycode: Option<HashMap<String, u16>>,
     pub garrison_protocol_keycode: Option<HashMap<String, u16>>,
     /// Directory used for load/save, supplied by the app at startup.
@@ -85,6 +88,11 @@ impl AppConfig {
     /// Current effective UIRatio.
     pub fn effective_ui_ratio(&self) -> UIRatio {
         self.ui_ratio.clone().unwrap_or_default()
+    }
+
+    /// Current vision config (cloned so callers can drop the config lock).
+    pub fn effective_vision(&self) -> VisionConfig {
+        self.vision.clone()
     }
 
     /// Custom keycodes for the current profile.
