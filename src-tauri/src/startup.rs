@@ -281,7 +281,7 @@ async fn handle_ratio_calibration(
     window_bounds: &WindowBounds,
     ratio_type: UIRatioType,
 ) -> anyhow::Result<()> {
-    if event.event_type != Some(CGEventType::KeyUp) || event.keycode != Keycode::SPACE {
+    if event.event_type != Some(CGEventType::KeyDown) || event.keycode != Keycode::SPACE {
         log::debug!("Calibrating mode: ignoring non-space key event");
         return Ok(());
     }

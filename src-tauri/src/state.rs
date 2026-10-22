@@ -50,7 +50,7 @@ fn build_vision_status(
 /// the mado monitor thread (which uses `blocking_read`/`blocking_write`).
 pub struct AppState {
     pub calibrating_mode: AtomicBool,
-    /// Lock-free mirror of `config.hotkey_enabled`, read on the hot KeyUp path.
+    /// Lock-free mirror of `config.hotkey_enabled`, read on the hot KeyDown path.
     pub hotkey_enabled: AtomicBool,
     /// Screen-recording permission, queried without prompting at startup.
     pub vision_permission: AtomicBool,
