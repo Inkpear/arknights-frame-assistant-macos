@@ -127,6 +127,9 @@ pub struct WorkImage {
     pub h: usize,
     pub block: usize,
     pub white: Vec<bool>,
+    /// White pixels in row-major order. The directional passes iterate this
+    /// list instead of rescanning every work pixel for each angle.
+    pub points: Vec<(u16, u16)>,
 }
 
 impl WorkImage {
@@ -138,6 +141,29 @@ impl WorkImage {
 /// Downscale the content with block-max. Taking the maximum preserves the thin
 /// white diamond outline, which nearest-neighbour or averaging can drop.
 pub fn build_work(frame: &RgbaImage, roi: Rect, params: &Params) -> WorkImage {
+    build_work_with(
+        frame.width() as usize,
+        frame.height() as usize,
+        roi,
+        params,
+        |x, y| {
+            let px = frame.get_pixel(x as u32, y as u32);
+            px[0].min(px[1]).min(px[2])
+        },
+    )
+}
+
+/// Same as [`build_work`], reading tightly packed BGRA rows directly. The
+/// capture path keeps the ScreenCaptureKit buffer in BGRA to avoid an
+/// RGBA conversion on every action.
+pub fn build_work_bgra(
+    data: &[u8],
+    width: usize,
+    height: usize,
+    roi: Rect,
+    params: &Params,
+) -> WorkImage {
+    debug_assert!(data.len() >= width * height * 4);
     let block = ((roi.w as f32 / params.target_width as f32).ceil() as usize).max(1);
     let w = (roi.w / block).max(1);
     let h = (roi.h / block).max(1);
@@ -147,12 +173,13 @@ pub fn build_work(frame: &RgbaImage, roi: Rect, params: &Params) -> WorkImage {
         for wx in 0..w {
             let x0 = roi.x + wx * block;
             let y0 = roi.y + wy * block;
-            let x1 = (x0 + block).min(roi.x + roi.w).min(frame.width() as usize);
-            let y1 = (y0 + block).min(roi.y + roi.h).min(frame.height() as usize);
+            let x1 = (x0 + block).min(roi.x + roi.w).min(width);
+            let y1 = (y0 + block).min(roi.y + roi.h).min(height);
             let mut max_min_rgb = 0u8;
             for y in y0..y1 {
-                for x in x0..x1 {
-                    let px = frame.get_pixel(x as u32, y as u32);
+                let row_start = (y * width + x0) * 4;
+                let row_end = (y * width + x1) * 4;
+                for px in data[row_start..row_end].chunks_exact(4) {
                     let min_rgb = px[0].min(px[1]).min(px[2]);
                     if min_rgb > max_min_rgb {
                         max_min_rgb = min_rgb;
@@ -163,7 +190,65 @@ pub fn build_work(frame: &RgbaImage, roi: Rect, params: &Params) -> WorkImage {
         }
     }
 
-    WorkImage { w, h, block, white }
+    finish_work(w, h, block, white)
+}
+
+#[inline]
+fn build_work_with<F>(
+    frame_width: usize,
+    frame_height: usize,
+    roi: Rect,
+    params: &Params,
+    min_rgb: F,
+) -> WorkImage
+where
+    F: Fn(usize, usize) -> u8,
+{
+    let block = ((roi.w as f32 / params.target_width as f32).ceil() as usize).max(1);
+    let w = (roi.w / block).max(1);
+    let h = (roi.h / block).max(1);
+    let mut white = vec![false; w * h];
+
+    for wy in 0..h {
+        for wx in 0..w {
+            let x0 = roi.x + wx * block;
+            let y0 = roi.y + wy * block;
+            let x1 = (x0 + block).min(roi.x + roi.w).min(frame_width);
+            let y1 = (y0 + block).min(roi.y + roi.h).min(frame_height);
+            let mut max_min_rgb = 0u8;
+            for y in y0..y1 {
+                for x in x0..x1 {
+                    let min_rgb = min_rgb(x, y);
+                    if min_rgb > max_min_rgb {
+                        max_min_rgb = min_rgb;
+                    }
+                }
+            }
+            white[wy * w + wx] = max_min_rgb >= params.white_threshold;
+        }
+    }
+
+    // Build the point list in a separate pass. Pushing inside the block-max
+    // loop inhibits vectorization and costs more than this scan.
+    finish_work(w, h, block, white)
+}
+
+#[inline]
+fn finish_work(w: usize, h: usize, block: usize, white: Vec<bool>) -> WorkImage {
+    let mut points = Vec::with_capacity((w * h) / 32);
+    for (i, &is_white) in white.iter().enumerate() {
+        if is_white {
+            points.push(((i % w) as u16, (i / w) as u16));
+        }
+    }
+
+    WorkImage {
+        w,
+        h,
+        block,
+        white,
+        points,
+    }
 }
 
 pub fn detect(work: &WorkImage, params: &Params) -> Outcome {
@@ -176,6 +261,10 @@ pub fn detect(work: &WorkImage, params: &Params) -> Outcome {
     }
 
     let mut candidates = Vec::new();
+    // Row bins depend only on the work-image size, so reuse the allocation
+    // across all angle passes instead of allocating ~1000 Vecs per angle.
+    let v_bins = ((work.h as f32 + work.w as f32 + 4.0).ceil() as usize) + 1;
+    let mut rows: Vec<Vec<u32>> = vec![Vec::new(); v_bins];
     // Detect both opposite-edge pairs. The reference only uses the
     // positive-slope pair; looking at the negative-slope pair as well makes
     // the detector survive when one pair is partially occluded.
@@ -185,7 +274,7 @@ pub fn detect(work: &WorkImage, params: &Params) -> Outcome {
     ] {
         let mut angle = angle_min;
         while angle <= angle_max + 0.01 {
-            collect_candidates(work, angle, params, &mut candidates);
+            collect_candidates(work, angle, params, &mut rows, &mut candidates);
             angle += params.angle_step;
         }
     }
@@ -225,32 +314,38 @@ pub fn detect(work: &WorkImage, params: &Params) -> Outcome {
     }
 }
 
-fn collect_candidates(work: &WorkImage, angle_deg: f32, params: &Params, out: &mut Vec<LineCand>) {
+fn collect_candidates(
+    work: &WorkImage,
+    angle_deg: f32,
+    params: &Params,
+    rows: &mut [Vec<u32>],
+    out: &mut Vec<LineCand>,
+) {
     let rad = angle_deg.to_radians();
     let (cos, sin) = (rad.cos(), rad.sin());
 
     let v_min = -(work.w as f32) - 2.0;
-    let v_max = work.h as f32 + 2.0;
-    let v_bins = ((v_max - v_min).ceil() as usize) + 1;
-    let mut rows: Vec<Vec<u32>> = vec![Vec::new(); v_bins];
+    let v_bins = rows.len();
+    debug_assert_eq!(
+        v_bins,
+        ((work.h as f32 + work.w as f32 + 4.0).ceil() as usize) + 1
+    );
+    for row in rows.iter_mut() {
+        row.clear();
+    }
 
     // For angles past 90 degrees cos() is negative and u can be negative;
     // shift u into a non-negative range and undo the shift when emitting
     // endpoints.
     let u_min = (work.w as f32 * cos).min(0.0) + (work.h as f32 * sin).min(0.0);
 
-    for y in 0..work.h {
-        for x in 0..work.w {
-            if !work.is_white(x, y) {
-                continue;
-            }
-            let xf = x as f32;
-            let yf = y as f32;
-            let u = xf * cos + yf * sin;
-            let v = -xf * sin + yf * cos;
-            let vb = ((v - v_min).round() as i32).clamp(0, v_bins as i32 - 1) as usize;
-            rows[vb].push((u - u_min).round().max(0.0) as u32);
-        }
+    for &(x, y) in &work.points {
+        let xf = x as f32;
+        let yf = y as f32;
+        let u = xf * cos + yf * sin;
+        let v = -xf * sin + yf * cos;
+        let vb = ((v - v_min).round() as i32).clamp(0, v_bins as i32 - 1) as usize;
+        rows[vb].push((u - u_min).round().max(0.0) as u32);
     }
 
     let min_len = (work.w as f32 * params.min_len_ratio).round() as u32;
@@ -606,6 +701,45 @@ mod tests {
 
     const WHITE: Rgba<u8> = Rgba([255, 255, 255, 255]);
 
+    #[test]
+    fn bgra_builder_matches_rgba() {
+        let mut img = RgbaImage::from_pixel(16, 8, Rgba([0, 0, 0, 255]));
+        img.put_pixel(3, 2, WHITE);
+        img.put_pixel(1, 1, WHITE);
+        img.put_pixel(3, 1, WHITE);
+        let mut bgra = Vec::with_capacity(16 * 8 * 4);
+        for px in img.pixels() {
+            bgra.extend_from_slice(&[px[2], px[1], px[0], px[3]]);
+        }
+        let params = Params {
+            target_width: 16,
+            ..Default::default()
+        };
+        let roi = Rect::new(0, 0, 16, 8);
+        let rgba_work = build_work(&img, roi, &params);
+        let bgra_work = build_work_bgra(&bgra, 16, 8, roi, &params);
+        assert_eq!(rgba_work.white, bgra_work.white);
+        assert_eq!(rgba_work.points, bgra_work.points);
+    }
+
+    #[test]
+    fn white_points_match_the_mask_in_row_major_order() {
+        let mut img = RgbaImage::from_pixel(16, 8, Rgba([0, 0, 0, 255]));
+        img.put_pixel(3, 2, WHITE);
+        img.put_pixel(1, 1, WHITE);
+        img.put_pixel(3, 1, WHITE);
+        let params = Params {
+            target_width: 16,
+            ..Default::default()
+        };
+        let work = build_work(&img, Rect::new(0, 0, 16, 8), &params);
+        assert_eq!(work.points, vec![(1, 1), (3, 1), (3, 2)]);
+        assert_eq!(
+            work.points.len(),
+            work.white.iter().filter(|is_white| **is_white).count()
+        );
+    }
+
     struct Case {
         center: Pt,
         diamond_w: f32,
@@ -699,10 +833,10 @@ mod tests {
         let work = build_work(&img, roi, &params);
         let outcome = detect(&work, &params);
         let det = outcome.detection.expect("diamond detected");
-        let top = Pt::new(case.center.x, case.center.y - case.diamond_h * 0.5);
-        let right = Pt::new(case.center.x + case.diamond_w * 0.5, case.center.y);
-        let bottom = Pt::new(case.center.x, case.center.y + case.diamond_h * 0.5);
-        let left = Pt::new(case.center.x - case.diamond_w * 0.5, case.center.y);
+        let _top = Pt::new(case.center.x, case.center.y - case.diamond_h * 0.5);
+        let _right = Pt::new(case.center.x + case.diamond_w * 0.5, case.center.y);
+        let _bottom = Pt::new(case.center.x, case.center.y + case.diamond_h * 0.5);
+        let _left = Pt::new(case.center.x - case.diamond_w * 0.5, case.center.y);
         let retreat = work_to_image(det.retreat, roi, work.block);
         let skill = work_to_image(det.skill, roi, work.block);
         (det, retreat, skill)

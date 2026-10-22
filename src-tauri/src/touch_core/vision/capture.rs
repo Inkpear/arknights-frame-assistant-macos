@@ -43,7 +43,6 @@ pub enum CaptureError {
     PermissionDenied,
     WindowNotFound,
     CaptureFailed(String),
-    EmptyImage,
 }
 
 impl fmt::Display for CaptureError {
@@ -52,7 +51,6 @@ impl fmt::Display for CaptureError {
             Self::PermissionDenied => write!(f, "screen recording permission denied"),
             Self::WindowNotFound => write!(f, "game window not found"),
             Self::CaptureFailed(message) => write!(f, "capture failed: {message}"),
-            Self::EmptyImage => write!(f, "captured image is empty"),
         }
     }
 }
@@ -60,14 +58,19 @@ impl fmt::Display for CaptureError {
 impl std::error::Error for CaptureError {}
 
 pub struct CapturedFrame {
-    /// Game content (title bar removed), in screen pixels.
-    pub image: RgbaImage,
+    /// Tightly packed BGRA rows, full capture height (title bar included).
+    pub bgra: Vec<u8>,
+    pub width: usize,
+    pub height: usize,
     /// Game content rect in screen points. The image origin maps here.
     pub content: WindowBounds,
     /// Image pixels per screen point.
     pub scale_x: f64,
     pub scale_y: f64,
     pub capture_ms: u128,
+    /// Time the request waited in the capture thread's queue (before the
+    /// stream/frame work started).
+    pub queue_ms: u64,
     /// Diagnostics for the debug JSON.
     pub window_frame: WindowBounds,
     pub crop_top: usize,
@@ -78,6 +81,7 @@ struct CaptureRequest {
     title: Option<String>,
     window_frame: WindowBounds,
     content_bounds: WindowBounds,
+    sent_at: Instant,
     reply: Sender<Result<CapturedFrame, CaptureError>>,
 }
 
@@ -220,6 +224,7 @@ impl CaptureService {
                 title: title.map(str::to_string),
                 window_frame: window_frame.clone(),
                 content_bounds: content_bounds.clone(),
+                sent_at: Instant::now(),
                 reply,
             }))
             .map_err(|_| CaptureError::CaptureFailed("capture thread stopped".to_string()))?;
@@ -255,6 +260,7 @@ pub fn warm_game_window(window_id: u32, title: Option<&str>, window_frame: &Wind
 }
 
 fn capture_loop(commands: Receiver<CaptureCommand>) {
+    crate::touch_core::qos::promote_current_thread();
     init_core_graphics();
     let mut cached: Option<CachedWindow> = None;
     loop {
@@ -289,16 +295,21 @@ fn capture_loop(commands: Receiver<CaptureCommand>) {
 }
 
 fn warm_request(request: &WarmRequest, cached: &mut Option<CachedWindow>) {
+    let started = Instant::now();
     let needs_refresh = cached.as_ref().is_none_or(|cache| {
         cache.window_id != request.window_id || !same_frame(&cache.frame, &request.window_frame)
     });
+    let mut refreshed = false;
     if needs_refresh {
         match refresh_window(
             request.window_id,
             request.title.as_deref(),
             &request.window_frame,
         ) {
-            Ok(cache) => *cached = Some(cache),
+            Ok(cache) => {
+                *cached = Some(cache);
+                refreshed = true;
+            }
             Err(error) => {
                 log::warn!("Vision warm-up failed: {error}");
                 return;
@@ -308,11 +319,21 @@ fn warm_request(request: &WarmRequest, cached: &mut Option<CachedWindow>) {
     let Some(cache) = cached.as_mut() else {
         return;
     };
+    let mut stream_started = false;
     if cache.stream.is_none() {
         match start_stream(&cache.filter, &cache.capture_rect) {
-            Ok(stream) => cache.stream = Some(stream),
+            Ok(stream) => {
+                cache.stream = Some(stream);
+                stream_started = true;
+            }
             Err(error) => log::warn!("Vision warm-up stream failed: {error}"),
         }
+    }
+    let elapsed_ms = started.elapsed().as_millis();
+    if refreshed || stream_started || elapsed_ms >= 5 {
+        log::info!(
+            "Vision warm-up: refresh={refreshed}, stream_start={stream_started}, {elapsed_ms}ms"
+        );
     }
 }
 
@@ -321,6 +342,9 @@ fn capture_request(
     cached: &mut Option<CachedWindow>,
 ) -> Result<CapturedFrame, CaptureError> {
     let started = Instant::now();
+    let queue_ms = started
+        .saturating_duration_since(request.sent_at)
+        .as_millis() as u64;
     let needs_refresh = cached.as_ref().is_none_or(|cache| {
         cache.window_id != request.window_id || !same_frame(&cache.frame, &request.window_frame)
     });
@@ -347,6 +371,7 @@ fn capture_request(
         &request.window_frame,
         &cache.capture_rect,
         started,
+        queue_ms,
     )
 }
 
@@ -463,6 +488,7 @@ fn build_frame(
     window_frame: &WindowBounds,
     capture_rect: &CGRect,
     started: Instant,
+    queue_ms: u64,
 ) -> Result<CapturedFrame, CaptureError> {
     let capture_scale_y = raw.height as f64 / capture_rect.size.height.max(1.0);
     let expected_content_h = (content_bounds.height * capture_scale_y).round() as usize;
@@ -471,19 +497,6 @@ fn build_frame(
         .saturating_sub(expected_content_h)
         .min(raw.height.saturating_sub(1));
     let content_h = raw.height - crop_top;
-
-    let mut rgba = Vec::with_capacity(raw.width * content_h * 4);
-    for y in crop_top..raw.height {
-        let row = &raw.data[y * raw.width * 4..(y + 1) * raw.width * 4];
-        for px in row.chunks_exact(4) {
-            rgba.push(px[2]);
-            rgba.push(px[1]);
-            rgba.push(px[0]);
-            rgba.push(255);
-        }
-    }
-    let image = RgbaImage::from_raw(raw.width as u32, content_h as u32, rgba)
-        .ok_or(CaptureError::EmptyImage)?;
 
     let scale_x = raw.width as f64 / content_bounds.width.max(1.0);
     let scale_y = content_h as f64 / content_bounds.height.max(1.0);
@@ -494,14 +507,34 @@ fn build_frame(
     }
 
     Ok(CapturedFrame {
-        image,
+        bgra: raw.data,
+        width: raw.width,
+        height: raw.height,
         content: content_bounds.clone(),
         scale_x,
         scale_y,
         capture_ms: started.elapsed().as_millis(),
+        queue_ms,
         window_frame: window_frame.clone(),
         crop_top,
     })
+}
+
+/// Convert a tightly packed BGRA buffer to RGBA. Only used for debug PNGs.
+pub(crate) fn bgra_to_rgba(data: &[u8], width: usize, height: usize) -> Option<RgbaImage> {
+    if width == 0 || height == 0 || data.len() < width * height * 4 {
+        return None;
+    }
+    let mut rgba = Vec::with_capacity(width * height * 4);
+    for row in data.chunks_exact(width * 4).take(height) {
+        for px in row.chunks_exact(4) {
+            rgba.push(px[2]);
+            rgba.push(px[1]);
+            rgba.push(px[0]);
+            rgba.push(255);
+        }
+    }
+    RgbaImage::from_raw(width as u32, height as u32, rgba)
 }
 
 fn same_frame(a: &WindowBounds, b: &WindowBounds) -> bool {

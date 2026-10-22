@@ -4,6 +4,7 @@ use mado::{WindowBounds, WindowEvent, WindowInfo, WindowListener};
 use tauri::{AppHandle, Manager};
 
 use crate::state::AppState;
+use crate::touch_core::vision::capture::warm_game_window;
 
 /// Tracks the currently focused window and its game-matching status.
 #[derive(Debug, Clone, Default)]
@@ -115,10 +116,12 @@ pub struct ArkWindowListener {
 impl WindowListener for ArkWindowListener {
     fn on_focus_change(&self, event: WindowEvent) {
         let app_state = self.app_handle.state::<AppState>();
-        {
+        let warm_target = {
             let mut ctx = app_state.window_ctx.blocking_write();
+            let mut focus_changed = false;
             match event {
                 WindowEvent::WindowChanged { window } => {
+                    focus_changed = true;
                     ctx.update_from_window_info(&window);
                 }
                 WindowEvent::WindowBoundsChanged { window } => {
@@ -136,6 +139,23 @@ impl WindowListener for ArkWindowListener {
                     ctx.mark_unavailable();
                 }
                 _ => {}
+            }
+            // Start the capture stream as soon as the game gains focus, so
+            // the first hotkey does not pay stream setup inside its wait.
+            // Bounds-only events are skipped: a drag would restart the stream
+            // repeatedly, and the next action refreshes it once.
+            if focus_changed && ctx.is_arknights {
+                ctx.window_id
+                    .zip(ctx.bounds().cloned())
+                    .map(|(window_id, bounds)| (window_id, ctx.window_title.clone(), bounds))
+            } else {
+                None
+            }
+        };
+        if let Some((window_id, title, bounds)) = warm_target {
+            let vision_enabled = app_state.config.blocking_read().effective_vision().enabled;
+            if vision_enabled && app_state.vision_permission_granted() {
+                warm_game_window(window_id, title.as_deref(), &bounds);
             }
         }
         app_state.emit_status();

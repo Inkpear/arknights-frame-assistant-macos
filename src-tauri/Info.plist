@@ -4,5 +4,9 @@
 <dict>
   <key>NSScreenCaptureUsageDescription</key>
   <string>识别游戏内白色菱形并计算技能/撤退按钮位置；截图仅在本机处理。 Detect the in-game selection diamond; screenshots stay on this Mac.</string>
+  <!-- The app is a background hotkey helper; App Nap would demote hot-path
+       threads to efficiency cores while the game is running. -->
+  <key>NSAppSleepDisabled</key>
+  <true/>
 </dict>
 </plist>

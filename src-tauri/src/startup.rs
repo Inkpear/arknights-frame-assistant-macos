@@ -9,6 +9,7 @@ use crate::ipc::protocol::UIRatioPayload;
 use crate::touch_core::action::ActionContext;
 use crate::touch_core::position;
 use crate::touch_core::position::UIRatioType;
+use crate::touch_core::qos;
 use crate::touch_core::vision::VisionRuntime;
 use crate::{state::AppState, touch_core::window::ArkWindowListener};
 
@@ -83,9 +84,13 @@ pub fn run() {
 
 /// Start event listener
 async fn start_event_listener(app_handle: tauri::AppHandle) -> anyhow::Result<()> {
+    // The tap thread is created by the cgevents crate and inherits this
+    // thread's QoS. Raise it before subscribing so key events are delivered
+    // even while the game is using the performance cores.
+    qos::promote_current_thread();
     let app_state = app_handle.state::<AppState>();
     let mut shutdown_signal = app_state.shutdown_channel.1.resubscribe();
-    let mask = CGEventType::KeyUp.mask_bit();
+    let mask = CGEventType::KeyDown.mask_bit();
     let stream = CGEventTapStream::subscribe(TapLocation::Session, mask, 64)?;
     loop {
         tokio::select! {
@@ -207,6 +212,10 @@ async fn handle_event(app_state: State<'_, AppState>, event: CGEventItem) -> any
     } else {
         None
     };
+    // All awaits are done: this poll now runs the whole click/wait/capture/
+    // detect sequence. This tokio worker inherits utility QoS in a background
+    // accessory app, so promote it before the latency-critical work.
+    qos::promote_current_thread();
     if let Some(runtime) = &vision {
         // Overlap stream setup with the action's ClickCursor + WaitAnimation.
         runtime.warm();

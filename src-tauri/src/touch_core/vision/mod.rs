@@ -11,9 +11,10 @@ use mado::WindowBounds;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use self::capture::{CaptureError, CapturedFrame, capture_game_window};
+use self::capture::{CaptureError, CapturedFrame, bgra_to_rgba, capture_game_window};
 use self::detector::{
-    Detection, Outcome, Params, Rect, build_work, detect, draw_circle, draw_line, work_to_image,
+    Detection, Outcome, Params, Rect, build_work_bgra, detect, draw_circle, draw_line,
+    work_to_image,
 };
 
 /// Which in-battle button to resolve.
@@ -148,7 +149,7 @@ impl VisionRuntime {
                 let reason = match error {
                     CaptureError::PermissionDenied => "permission_denied",
                     CaptureError::WindowNotFound => "window_not_found",
-                    CaptureError::CaptureFailed(_) | CaptureError::EmptyImage => "capture_failed",
+                    CaptureError::CaptureFailed(_) => "capture_failed",
                 };
                 log::warn!("Vision capture failed ({reason}): {error}");
                 self.set_status(VisionStatusUpdate {
@@ -164,14 +165,15 @@ impl VisionRuntime {
             }
         };
 
-        let roi = Rect::new(
-            0,
-            0,
-            captured.image.width() as usize,
-            captured.image.height() as usize,
-        );
-        let work = build_work(&captured.image, roi, &params);
+        let content_h = captured.height - captured.crop_top;
+        let content_bgra = &captured.bgra[captured.crop_top * captured.width * 4..];
+        let roi = Rect::new(0, 0, captured.width, content_h);
+        let build_started = Instant::now();
+        let work = build_work_bgra(content_bgra, captured.width, content_h, roi, &params);
+        let build_ms = build_started.elapsed().as_millis() as u64;
+        let detect_started = Instant::now();
         let outcome = detect(&work, &params);
+        let detect_ms = detect_started.elapsed().as_millis() as u64;
         let Some(detection) = outcome.detection.as_ref() else {
             let latency = started.elapsed().as_millis() as u64;
             let debug_path = if self.config.debug_capture {
@@ -196,9 +198,12 @@ impl VisionRuntime {
                 debug_path,
             });
             log::info!(
-                "Vision {kind:?} found no diamond: {} ({} candidates); no click",
+                "Vision {kind:?} found no diamond: {} ({} candidates); queue {}ms, build {}ms, detect {}ms; no click",
                 outcome.reason.as_deref().unwrap_or("no diamond"),
-                outcome.candidates.len()
+                outcome.candidates.len(),
+                captured.queue_ms,
+                build_ms,
+                detect_ms
             );
             return VisionDecision::Skip;
         };
@@ -255,11 +260,13 @@ impl VisionRuntime {
             debug_path,
         });
         log::info!(
-            "Vision {kind:?}: captured {}x{} in {}ms, detect {}ms, confidence {:.2}, point ({:.1}, {:.1}){}",
-            captured.image.width(),
-            captured.image.height(),
+            "Vision {kind:?}: captured {}x{} in {}ms (queue {}ms), build {}ms, detect {}ms, confidence {:.2}, point ({:.1}, {:.1}){}",
+            captured.width,
+            content_h,
             captured.capture_ms,
-            latency.saturating_sub(captured.capture_ms as u64),
+            captured.queue_ms,
+            build_ms,
+            detect_ms,
             detection.confidence,
             screen.0,
             screen.1,
@@ -305,13 +312,14 @@ impl VisionRuntime {
             );
             return None;
         }
-        let roi = Rect::new(
-            0,
-            0,
-            captured.image.width() as usize,
-            captured.image.height() as usize,
-        );
-        let mut overlay = captured.image.clone();
+        let content_h = captured.height - captured.crop_top;
+        let content_bgra = &captured.bgra[captured.crop_top * captured.width * 4..];
+        let Some(frame) = bgra_to_rgba(content_bgra, captured.width, content_h) else {
+            log::warn!("Failed to convert vision frame for debug");
+            return None;
+        };
+        let roi = Rect::new(0, 0, captured.width, content_h);
+        let mut overlay = frame.clone();
         for line in outcome.candidates.iter().take(20) {
             let a = work_to_image(line.p0, roi, work.block);
             let b = work_to_image(line.p1, roi, work.block);
@@ -320,7 +328,7 @@ impl VisionRuntime {
         if let Some(detection) = &outcome.detection {
             draw_detection(&mut overlay, detection, roi, work.block);
         }
-        if let Err(error) = captured.image.save(dir.join("frame.png")) {
+        if let Err(error) = frame.save(dir.join("frame.png")) {
             log::warn!("Failed to save vision frame: {error}");
         }
         if let Err(error) = overlay.save(dir.join("overlay.png")) {
@@ -335,7 +343,8 @@ impl VisionRuntime {
             "capture_scale": [captured.scale_x, captured.scale_y],
             "capture_crop_top": captured.crop_top,
             "capture_ms": captured.capture_ms,
-            "image": { "width": captured.image.width(), "height": captured.image.height() },
+            "capture_queue_ms": captured.queue_ms,
+            "image": { "width": captured.width, "height": content_h },
             "block": work.block,
             "work": { "width": work.w, "height": work.h },
             "threshold": self.config.white_threshold,
